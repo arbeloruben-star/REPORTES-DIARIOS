@@ -8,12 +8,14 @@ from pathlib import Path
 
 from flask import Flask, redirect, render_template, request, send_file, url_for, make_response
 from openpyxl import Workbook
+from openpyxl.drawing.image import Image as XLImage
 from openpyxl.styles import Font, PatternFill
 
 
 APP_DIR = Path(__file__).resolve().parent
 DB_PATH = Path(os.environ.get("DATABASE_PATH", APP_DIR / "reportabilidad.db"))
 EXPORT_PATH = APP_DIR / "reporte_komatsu.xlsx"
+LOGO_PATH = APP_DIR / "static" / "soldesp-logo.jpg"
 
 TURNOS = ["Dia", "Noche"]
 EQUIPOS = [
@@ -775,6 +777,24 @@ def _write_sheet(ws, rows, col_widths=None):
         ws.column_dimensions[letter].width = min(max(len(str(c.value or "")) for c in col) + 2, 45)
 
 
+def _brand_existing_header(ws, title: str, merge_to: str):
+    for merged_range in list(ws.merged_cells.ranges):
+        if str(merged_range).startswith("A1:"):
+            ws.unmerge_cells(str(merged_range))
+    ws["A1"] = ""
+    ws.row_dimensions[1].height = 42
+    ws.column_dimensions["A"].width = max(ws.column_dimensions["A"].width or 0, 14)
+    ws.column_dimensions["B"].width = max(ws.column_dimensions["B"].width or 0, 14)
+    if LOGO_PATH.exists():
+        logo = XLImage(str(LOGO_PATH))
+        logo.width = 110
+        logo.height = 38
+        ws.add_image(logo, "A1")
+    ws["C1"] = title
+    ws["C1"].font = Font(bold=True, size=13, color="1F4E78")
+    ws.merge_cells(f"C1:{merge_to}1")
+
+
 def _hoja_asistencia(conn, wb, fecha, turno):
     ws = wb.create_sheet("Asistencia")
     rows = []
@@ -791,6 +811,7 @@ def _hoja_asistencia(conn, wb, fecha, turno):
     ws["A1"].font = Font(bold=True, size=13, color="1F4E78")
     ws.merge_cells("A1:H1")
     ws.row_dimensions[1].height = 22
+    _brand_existing_header(ws, f"ASISTENCIA DIARIA  -  {turno.upper()}  -  {fecha}", "H")
 
 
 def _hoja_actividades(conn, wb, fecha, turno):
@@ -816,6 +837,7 @@ def _hoja_actividades(conn, wb, fecha, turno):
     ws["A1"].font = Font(bold=True, size=13, color="1F4E78")
     ws.merge_cells("A1:M1")
     ws.row_dimensions[1].height = 22
+    _brand_existing_header(ws, f"ACTIVIDADES DEL TURNO  -  {turno.upper()}  -  {fecha}", "M")
 
 
 def _hoja_resumen_hh(conn, wb, fecha, turno):
@@ -856,6 +878,7 @@ def _hoja_resumen_hh(conn, wb, fecha, turno):
     ws["A1"].font = Font(bold=True, size=13, color="1F4E78")
     ws.merge_cells("A1:E1")
     ws.row_dimensions[1].height = 22
+    _brand_existing_header(ws, f"RESUMEN HH POR PERSONA  -  {turno.upper()}  -  {fecha}", "E")
 
 
 @app.route("/exportar")
