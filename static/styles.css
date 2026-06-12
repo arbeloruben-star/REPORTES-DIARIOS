@@ -283,6 +283,34 @@ select[multiple] option {
   border-bottom: 1px solid #eef2f6;
 }
 textarea { resize: vertical; }
+.voice-field {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 72px;
+  gap: 8px;
+  align-items: stretch;
+}
+.voice-field input,
+.voice-field textarea {
+  min-width: 0;
+}
+.voice-btn {
+  min-height: 48px;
+  border: 1px solid #b9cede;
+  border-radius: 6px;
+  background: #e9f1f7;
+  color: var(--brand-blue);
+  font-weight: 800;
+  padding: 8px;
+}
+.voice-btn.listening {
+  background: var(--brand-orange);
+  border-color: var(--brand-orange);
+  color: #fff;
+}
+.voice-btn:disabled {
+  opacity: .55;
+  cursor: not-allowed;
+}
 .field-note {
   color: var(--muted);
   font-size: 12px;
@@ -735,6 +763,8 @@ th { background: #eef2f6; }
   .filters { display: grid; grid-template-columns: 1fr 1fr auto; }
   .field-form { border-left: 0; border-right: 0; border-radius: 0; margin-left: -12px; margin-right: -12px; }
   input, select, textarea { font-size: 16px; }
+  .voice-field { grid-template-columns: minmax(0, 1fr) 64px; }
+  .voice-btn { min-height: 44px; font-size: 13px; padding: 6px; }
   .submit-btn { min-height: 46px; font-size: 15px; border-radius: 6px; }
   .worker-trigger { min-height: 44px; padding: 9px 10px; }
   .worker-trigger span {

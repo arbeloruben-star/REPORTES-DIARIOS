@@ -52,7 +52,10 @@
   </div>
 
   <label>Nombre de la tarea
-    <input type="text" name="nombre_tarea" id="nombre_tarea" value="{{ edit.nombre_tarea if edit else '' }}" placeholder="Ej: Reparacion fisura tolva CAEX 121" required>
+    <div class="voice-field">
+      <input type="text" name="nombre_tarea" id="nombre_tarea" value="{{ edit.nombre_tarea if edit else '' }}" placeholder="Ej: Reparacion fisura tolva CAEX 121" required>
+      <button type="button" class="voice-btn" data-dictate-target="nombre_tarea" aria-label="Dictar nombre de la tarea">Mic</button>
+    </div>
   </label>
 
   <label>Supervisor
@@ -127,7 +130,10 @@
   </div>
 
   <label>Observacion opcional
-    <textarea name="observacion" id="observacion" rows="2" placeholder="Solo si aporta trazabilidad">{{ edit.observacion if edit else '' }}</textarea>
+    <div class="voice-field textarea-field">
+      <textarea name="observacion" id="observacion" rows="2" placeholder="Solo si aporta trazabilidad">{{ edit.observacion if edit else '' }}</textarea>
+      <button type="button" class="voice-btn" data-dictate-target="observacion" aria-label="Dictar observacion">Mic</button>
+    </div>
   </label>
 
   <div class="prep-box">

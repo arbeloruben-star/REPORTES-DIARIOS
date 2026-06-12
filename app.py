@@ -81,6 +81,7 @@ TRABAJADORES = [
     "Luis Felipe Silva Vargas",
     "Luciano Villegas Hevia",
     "Nicolas Antonio Lizana Olivares",
+    "Felix Jamett Rivadeneira",
 ]
 ESTADOS = ["En proceso", "Ejecutado", "Parcial", "Stand-by", "No ejecutado"]
 CAUSALES = [

@@ -371,5 +371,81 @@ function initAttendance() {
   update();
 }
 
+function initVoiceDictation() {
+  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  const buttons = Array.from(document.querySelectorAll("[data-dictate-target]"));
+  if (!buttons.length) return;
+
+  if (!SpeechRecognition) {
+    buttons.forEach((button) => {
+      button.disabled = true;
+      button.title = "Dictado no disponible en este navegador";
+    });
+    return;
+  }
+
+  let activeRecognition = null;
+  let activeButton = null;
+
+  buttons.forEach((button) => {
+    button.addEventListener("click", () => {
+      const target = document.getElementById(button.dataset.dictateTarget);
+      if (!target) return;
+
+      if (activeRecognition) {
+        activeRecognition.stop();
+        if (activeButton) {
+          activeButton.classList.remove("listening");
+          activeButton.textContent = "Mic";
+        }
+        activeRecognition = null;
+        activeButton = null;
+        return;
+      }
+
+      const recognition = new SpeechRecognition();
+      recognition.lang = "es-CL";
+      recognition.interimResults = false;
+      recognition.continuous = false;
+
+      recognition.onstart = () => {
+        activeRecognition = recognition;
+        activeButton = button;
+        button.classList.add("listening");
+        button.textContent = "Grabando";
+      };
+
+      recognition.onresult = (event) => {
+        const transcript = Array.from(event.results)
+          .map((result) => result[0]?.transcript || "")
+          .join(" ")
+          .trim();
+        if (!transcript) return;
+        const separator = target.value && !target.value.endsWith(" ") ? " " : "";
+        target.value = `${target.value}${separator}${transcript}`.trim();
+        target.dispatchEvent(new Event("input", { bubbles: true }));
+        target.dispatchEvent(new Event("change", { bubbles: true }));
+      };
+
+      recognition.onend = () => {
+        button.classList.remove("listening");
+        button.textContent = "Mic";
+        activeRecognition = null;
+        activeButton = null;
+      };
+
+      recognition.onerror = () => {
+        button.classList.remove("listening");
+        button.textContent = "Mic";
+        activeRecognition = null;
+        activeButton = null;
+      };
+
+      recognition.start();
+    });
+  });
+}
+
 document.addEventListener("DOMContentLoaded", initFrentes);
 document.addEventListener("DOMContentLoaded", initAttendance);
+document.addEventListener("DOMContentLoaded", initVoiceDictation);
