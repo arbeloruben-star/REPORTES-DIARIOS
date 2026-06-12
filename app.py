@@ -488,7 +488,9 @@ def index():
             "validaciones": validaciones,
             "contexto": contexto,
         }
-        return render_template("index.html", flujo=flujo)
+        response = make_response(render_template("index.html", flujo=flujo))
+        response.headers["Cache-Control"] = "no-store, max-age=0"
+        return response
 
 
 @app.route("/asistencia", methods=["GET", "POST"])

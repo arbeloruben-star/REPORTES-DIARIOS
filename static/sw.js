@@ -1,4 +1,4 @@
-const CACHE_NAME = "soldesp-reportabilidad-v4";
+const CACHE_NAME = "soldesp-reportabilidad-v5";
 const SHELL_ASSETS = [
   "/",
   "/offline",
@@ -32,6 +32,14 @@ self.addEventListener("activate", (event) => {
 self.addEventListener("fetch", (event) => {
   const request = event.request;
   if (request.method !== "GET") return;
+  const acceptsHtml = request.headers.get("accept")?.includes("text/html");
+
+  if (request.mode === "navigate" || acceptsHtml) {
+    event.respondWith(
+      fetch(request, { cache: "no-store" }).catch(() => caches.match("/offline"))
+    );
+    return;
+  }
 
   event.respondWith(
     fetch(request)
