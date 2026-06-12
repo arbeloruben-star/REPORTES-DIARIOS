@@ -293,6 +293,7 @@ def init_db() -> None:
             ensure_column(conn, "frentes", col, defn)
         ensure_column(conn, "asistencia", "supervisor", "TEXT")
         ensure_column(conn, "asistencia", "enviado_en", "TEXT")
+        ensure_column(conn, "asistencia", "motivo_ausencia", "TEXT")
         seed_catalogs(conn)
         if scalar(conn, "SELECT COUNT(*) FROM cuadrillas") == 0:
             seed(conn)
@@ -498,6 +499,12 @@ def asistencia():
             manuales_raw = request.form.get("trabajadores_manual", "")
             manuales = [x.strip() for x in manuales_raw.replace(";", "\n").replace(",", "\n").splitlines() if x.strip()]
             presentes = list(dict.fromkeys(presentes + manuales))
+            ausentes = []
+            for idx in request.form.getlist("trabajadores_ausentes"):
+                nombre = request.form.get(f"ausente_nombre_{idx}", "").strip()
+                motivo = request.form.get(f"motivo_ausencia_{idx}", "").strip()
+                if nombre and nombre not in presentes:
+                    ausentes.append((nombre, motivo or "Permiso"))
             hh = effective_hours(ingreso, salida)
             enviado_en = datetime.now().isoformat(timespec="seconds") if accion == "enviar" else None
             # Al enviar asistencia, borrar datos de dias anteriores (conserva el dia en curso)
@@ -510,14 +517,19 @@ def asistencia():
                 (fecha, turno, supervisor),
             )
             conn.executemany(
-                """INSERT INTO asistencia(fecha, turno, supervisor, trabajador, cargo, especialidad, cuadrilla, estado, hora_ingreso, hora_salida, hh_disponibles, enviado_en)
-                VALUES (?, ?, ?, ?, 'Soldador', 'Soldadura', 'Turno', 'Presente', ?, ?, ?, ?)""",
+                """INSERT INTO asistencia(fecha, turno, supervisor, trabajador, cargo, especialidad, cuadrilla, estado, hora_ingreso, hora_salida, hh_disponibles, enviado_en, motivo_ausencia)
+                VALUES (?, ?, ?, ?, 'Soldador', 'Soldadura', 'Turno', 'Presente', ?, ?, ?, ?, '')""",
                 [(fecha, turno, supervisor, t, ingreso, salida, hh, enviado_en) for t in presentes],
+            )
+            conn.executemany(
+                """INSERT INTO asistencia(fecha, turno, supervisor, trabajador, cargo, especialidad, cuadrilla, estado, hora_ingreso, hora_salida, hh_disponibles, enviado_en, motivo_ausencia)
+                VALUES (?, ?, ?, ?, 'Soldador', 'Soldadura', 'Turno', 'Ausente', '', '', 0, ?, ?)""",
+                [(fecha, turno, supervisor, nombre, enviado_en, motivo) for nombre, motivo in ausentes],
             )
             if supervisor:
                 conn.execute(
-                    """INSERT INTO asistencia(fecha, turno, supervisor, trabajador, cargo, especialidad, cuadrilla, estado, hora_ingreso, hora_salida, hh_disponibles, enviado_en)
-                    VALUES (?, ?, ?, ?, 'Supervisor', 'Supervision', 'Supervision', 'Presente', ?, ?, ?, ?)""",
+                    """INSERT INTO asistencia(fecha, turno, supervisor, trabajador, cargo, especialidad, cuadrilla, estado, hora_ingreso, hora_salida, hh_disponibles, enviado_en, motivo_ausencia)
+                    VALUES (?, ?, ?, ?, 'Supervisor', 'Supervision', 'Supervision', 'Presente', ?, ?, ?, ?, '')""",
                     (fecha, turno, supervisor, supervisor, ingreso, salida, hh, enviado_en),
                 )
             conn.executemany("INSERT OR IGNORE INTO trabajadores(nombre) VALUES (?)", [(x,) for x in manuales])
@@ -742,10 +754,11 @@ def validaciones_turno(conn, fecha: str, turno: str) -> dict:
 def asistencia_export_rows(conn):
     return [{"Fecha": r["fecha"], "Turno": r["turno"], "Supervisor turno": r["supervisor"] or "",
              "Nombre": r["trabajador"], "Cargo": r["cargo"], "Especialidad": r["especialidad"],
+             "Estado": r["estado"], "Motivo ausencia": r["motivo_ausencia"] or "",
              "Hora ingreso": r["hora_ingreso"], "Hora salida": r["hora_salida"],
              "HH disponibles": r["hh_disponibles"], "Envio asistencia": r["enviado_en"]}
             for r in conn.execute(
-                "SELECT * FROM asistencia WHERE estado = 'Presente' AND enviado_en IS NOT NULL ORDER BY fecha, turno, supervisor, CASE WHEN cargo = 'Supervisor' THEN 0 ELSE 1 END, trabajador"
+                "SELECT * FROM asistencia WHERE enviado_en IS NOT NULL ORDER BY fecha, turno, supervisor, CASE WHEN cargo = 'Supervisor' THEN 0 WHEN estado = 'Presente' THEN 1 ELSE 2 END, trabajador"
             )]
 
 
@@ -800,19 +813,20 @@ def _hoja_asistencia(conn, wb, fecha, turno):
     ws = wb.create_sheet("Asistencia")
     rows = []
     for r in conn.execute(
-        "SELECT trabajador, cargo, hora_ingreso, hora_salida, hh_disponibles, enviado_en FROM asistencia WHERE fecha = ? AND turno = ? AND estado = 'Presente' AND enviado_en IS NOT NULL ORDER BY CASE WHEN cargo = 'Supervisor' THEN 0 ELSE 1 END, trabajador",
+        "SELECT trabajador, cargo, estado, motivo_ausencia, hora_ingreso, hora_salida, hh_disponibles, enviado_en FROM asistencia WHERE fecha = ? AND turno = ? AND enviado_en IS NOT NULL ORDER BY CASE WHEN cargo = 'Supervisor' THEN 0 WHEN estado = 'Presente' THEN 1 ELSE 2 END, trabajador",
         (fecha, turno),
     ):
         rows.append({"Fecha": fecha, "Turno": turno, "Nombre": r["trabajador"], "Cargo": r["cargo"],
+                     "Estado": r["estado"], "Motivo ausencia": r["motivo_ausencia"] or "",
                      "Hora ingreso": r["hora_ingreso"], "Hora salida": r["hora_salida"],
                      "HH disponibles": r["hh_disponibles"], "Envio asistencia": (r["enviado_en"] or "")[:16]})
     _write_sheet(ws, rows)
     ws.insert_rows(1)
     ws["A1"] = f"ASISTENCIA DIARIA  —  {turno.upper()}  —  {fecha}"
     ws["A1"].font = Font(bold=True, size=13, color="1F4E78")
-    ws.merge_cells("A1:H1")
+    ws.merge_cells("A1:J1")
     ws.row_dimensions[1].height = 22
-    _brand_existing_header(ws, f"ASISTENCIA DIARIA  -  {turno.upper()}  -  {fecha}", "H")
+    _brand_existing_header(ws, f"ASISTENCIA DIARIA  -  {turno.upper()}  -  {fecha}", "J")
 
 
 def _hoja_actividades(conn, wb, fecha, turno):

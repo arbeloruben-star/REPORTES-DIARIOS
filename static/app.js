@@ -318,6 +318,15 @@ function initAttendance() {
   const clear = document.getElementById("clearAttendance");
   const selectAll = document.getElementById("selectAllAttendance");
   const inputs = Array.from(document.querySelectorAll("input[name='trabajadores_presentes']"));
+  const absentDropdown = document.getElementById("absentDropdown");
+  const absentTrigger = document.getElementById("absentTrigger");
+  const absentCount = document.getElementById("absentCount");
+  const absentBadge = document.getElementById("absentBadge");
+  const absentTriggerText = document.getElementById("absentTriggerText");
+  const clearAbsent = document.getElementById("clearAbsent");
+  const absentInputs = Array.from(document.querySelectorAll("input[name='trabajadores_ausentes']"));
+  const presentByName = new Map(inputs.map((input) => [input.value, input]));
+  const absentByName = new Map(absentInputs.map((input) => [input.dataset.workerName, input]));
   const applyShiftHours = () => {
     if (!turnoSelect || !horaIngreso || !horaSalida) return;
     if (turnoSelect.value === "Noche") {
@@ -335,6 +344,7 @@ function initAttendance() {
   const update = () => {
     const selectedInputs = inputs.filter((input) => input.checked);
     const selected = selectedInputs.length;
+    const absentSelected = absentInputs.filter((input) => input.checked);
     if (count) count.textContent = selected === 1 ? "1 seleccionado" : `${selected} seleccionados`;
     if (badge) badge.textContent = String(selected);
     if (triggerText) {
@@ -342,6 +352,17 @@ function initAttendance() {
         ? selectedInputs.map((input) => input.value.split(" ").slice(0, 2).join(" ")).join(", ")
         : "Seleccionar soldadores presentes";
     }
+    if (absentCount) absentCount.textContent = absentSelected.length === 1 ? "1 ausente" : `${absentSelected.length} ausentes`;
+    if (absentBadge) absentBadge.textContent = String(absentSelected.length);
+    if (absentTriggerText) {
+      absentTriggerText.textContent = absentSelected.length
+        ? absentSelected.map((input) => input.dataset.workerName.split(" ").slice(0, 2).join(" ")).join(", ")
+        : "Seleccionar ausentes";
+    }
+    absentInputs.forEach((input) => {
+      const select = input.closest(".absent-check")?.querySelector("select");
+      if (select) select.disabled = !input.checked;
+    });
   };
   if (trigger && dropdown) {
     trigger.addEventListener("click", () => {
@@ -351,7 +372,32 @@ function initAttendance() {
       if (!dropdown.contains(event.target)) dropdown.classList.remove("open");
     });
   }
-  inputs.forEach((input) => input.addEventListener("change", update));
+  if (absentTrigger && absentDropdown) {
+    absentTrigger.addEventListener("click", () => {
+      absentDropdown.classList.toggle("open");
+    });
+    document.addEventListener("click", (event) => {
+      if (!absentDropdown.contains(event.target)) absentDropdown.classList.remove("open");
+    });
+  }
+  inputs.forEach((input) => {
+    input.addEventListener("change", () => {
+      if (input.checked) {
+        const absent = absentByName.get(input.value);
+        if (absent) absent.checked = false;
+      }
+      update();
+    });
+  });
+  absentInputs.forEach((input) => {
+    input.addEventListener("change", () => {
+      if (input.checked) {
+        const present = presentByName.get(input.dataset.workerName);
+        if (present) present.checked = false;
+      }
+      update();
+    });
+  });
   if (clear) {
     clear.addEventListener("click", () => {
       inputs.forEach((input) => {
@@ -365,87 +411,22 @@ function initAttendance() {
       inputs.forEach((input) => {
         input.checked = true;
       });
+      absentInputs.forEach((input) => {
+        input.checked = false;
+      });
+      update();
+    });
+  }
+  if (clearAbsent) {
+    clearAbsent.addEventListener("click", () => {
+      absentInputs.forEach((input) => {
+        input.checked = false;
+      });
       update();
     });
   }
   update();
 }
 
-function initVoiceDictation() {
-  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-  const buttons = Array.from(document.querySelectorAll("[data-dictate-target]"));
-  if (!buttons.length) return;
-
-  if (!SpeechRecognition) {
-    buttons.forEach((button) => {
-      button.disabled = true;
-      button.title = "Dictado no disponible en este navegador";
-    });
-    return;
-  }
-
-  let activeRecognition = null;
-  let activeButton = null;
-
-  buttons.forEach((button) => {
-    button.addEventListener("click", () => {
-      const target = document.getElementById(button.dataset.dictateTarget);
-      if (!target) return;
-
-      if (activeRecognition) {
-        activeRecognition.stop();
-        if (activeButton) {
-          activeButton.classList.remove("listening");
-          activeButton.textContent = "Mic";
-        }
-        activeRecognition = null;
-        activeButton = null;
-        return;
-      }
-
-      const recognition = new SpeechRecognition();
-      recognition.lang = "es-CL";
-      recognition.interimResults = false;
-      recognition.continuous = false;
-
-      recognition.onstart = () => {
-        activeRecognition = recognition;
-        activeButton = button;
-        button.classList.add("listening");
-        button.textContent = "Grabando";
-      };
-
-      recognition.onresult = (event) => {
-        const transcript = Array.from(event.results)
-          .map((result) => result[0]?.transcript || "")
-          .join(" ")
-          .trim();
-        if (!transcript) return;
-        const separator = target.value && !target.value.endsWith(" ") ? " " : "";
-        target.value = `${target.value}${separator}${transcript}`.trim();
-        target.dispatchEvent(new Event("input", { bubbles: true }));
-        target.dispatchEvent(new Event("change", { bubbles: true }));
-      };
-
-      recognition.onend = () => {
-        button.classList.remove("listening");
-        button.textContent = "Mic";
-        activeRecognition = null;
-        activeButton = null;
-      };
-
-      recognition.onerror = () => {
-        button.classList.remove("listening");
-        button.textContent = "Mic";
-        activeRecognition = null;
-        activeButton = null;
-      };
-
-      recognition.start();
-    });
-  });
-}
-
 document.addEventListener("DOMContentLoaded", initFrentes);
 document.addEventListener("DOMContentLoaded", initAttendance);
-document.addEventListener("DOMContentLoaded", initVoiceDictation);
