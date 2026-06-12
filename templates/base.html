@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#123f68">
+  <meta name="mobile-web-app-capable" content="yes">
+  <title>Reportabilidad Komatsu</title>
+  <link rel="manifest" href="{{ url_for('static', filename='manifest.webmanifest') }}">
+  <link rel="icon" href="{{ url_for('static', filename='icons/icon-192.png') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+</head>
+<body class="{% block body_class %}{% endblock %}">
+  <header class="topbar">
+    <a class="brand" href="{{ url_for('index') }}">
+      <img src="{{ url_for('static', filename='soldesp-logo.jpg') }}" alt="SoldesP">
+      <span>Reportabilidad diaria</span>
+    </a>
+    <nav>
+      <a href="{{ url_for('asistencia') }}">Asistencia</a>
+      <a href="{{ url_for('frentes') }}">Actividades</a>
+      <a href="{{ url_for('dashboard') }}">Resumen</a>
+      <a href="{{ url_for('exportar') }}">Excel</a>
+    </nav>
+  </header>
+  <main class="page">
+    {% block content %}{% endblock %}
+  </main>
+  <script src="{{ url_for('static', filename='app.js') }}"></script>
+  <script>
+    if ("serviceWorker" in navigator) {
+      window.addEventListener("load", () => {
+        navigator.serviceWorker.register("/service-worker.js").catch(() => {});
+      });
+    }
+  </script>
+  {% block scripts %}{% endblock %}
+</body>
+</html>

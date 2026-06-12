@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="screen-head"><div><h1>Demanda operacional</h1><p>Capacidad versus requerimiento</p></div></section>
+<form class="field-form" method="post">
+  <div class="grid two">
+    <label>Fecha <input type="date" name="fecha" value="{{ opts.hoy }}" required></label>
+    <label>Turno <select name="turno">{% for item in opts.turnos %}<option>{{ item }}</option>{% endfor %}</select></label>
+  </div>
+  <label>Equipo <select name="equipo">{% for item in opts.equipos %}<option>{{ item }}</option>{% endfor %}</select></label>
+  <label>Actividad requerida <select name="actividad">{% for item in opts.actividades %}<option>{{ item }}</option>{% endfor %}</select></label>
+  <div class="grid two">
+    <label>Prioridad <select name="prioridad"><option>Alta</option><option>Media</option><option>Baja</option></select></label>
+    <label>Estado equipo <select name="estado_equipo"><option>Liberado</option><option>Liberado parcial</option><option>No liberado</option><option>Suspendido</option></select></label>
+  </div>
+  <label>HH requeridas estimadas <input type="number" min="0" step="0.25" name="hh_requeridas" required></label>
+  <label>Restriccion principal <input name="restriccion"></label>
+  <label>Observacion <textarea name="observacion" rows="2"></textarea></label>
+  <button class="submit-btn">Guardar demanda</button>
+</form>
+<section class="table-wrap"><table><thead><tr><th>Fecha</th><th>Turno</th><th>Equipo</th><th>Prioridad</th><th>Estado</th><th>HH req.</th></tr></thead><tbody>
+{% for r in rows %}<tr><td>{{ r.fecha }}</td><td>{{ r.turno }}</td><td>{{ r.equipo }}</td><td>{{ r.prioridad }}</td><td>{{ r.estado_equipo }}</td><td>{{ r.hh_requeridas }}</td></tr>{% endfor %}
+</tbody></table></section>
+{% endblock %}

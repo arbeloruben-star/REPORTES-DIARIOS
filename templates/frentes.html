@@ -1,0 +1,162 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="screen-head">
+  <div>
+    <h1>Registro de actividades</h1>
+    <p>Formulario rapido para terreno</p>
+  </div>
+  <a class="ghost-btn primary-action" href="{{ url_for('cierre', fecha=fecha, turno=turno) }}">Cierre y envio de informe</a>
+</section>
+
+{% if error %}<div class="alert">{{ error }}</div>{% endif %}
+{% if not present_count_turno %}
+{% if pending_count_turno %}
+<div class="alert">
+  Hay {{ pending_count_turno|int }} soldadores guardados como asistencia pendiente. Debes enviarla para habilitarlos en tareas.
+  <form method="post" action="{{ url_for('enviar_asistencia_pendiente') }}" class="inline-action">
+    <input type="hidden" name="fecha" value="{{ fecha }}">
+    <input type="hidden" name="turno" value="{{ turno }}">
+    <input type="hidden" name="supervisor" value="{{ supervisor }}">
+    <button type="submit">Enviar asistencia guardada y habilitar</button>
+  </form>
+</div>
+{% else %}
+<div class="alert">Primero guarda y envia la asistencia diaria. Solo los soldadores enviados como presentes apareceran para asignar tareas.</div>
+{% endif %}
+{% endif %}
+
+<form class="field-form mobile-first" method="post" id="frenteForm">
+  <div class="quickbar">
+    <button type="button" class="quick" data-action="start">Iniciar frente</button>
+    <button type="button" class="quick" data-action="close">Cerrar frente</button>
+    <button type="button" class="quick danger" data-action="noexec">Marcar no ejecutado</button>
+    <button type="button" class="quick" data-action="duplicate">Duplicar anterior</button>
+  </div>
+
+  <div class="grid two">
+    <label>Fecha
+      <input type="date" name="fecha" id="fecha" value="{{ fecha or opts.hoy }}" required>
+    </label>
+    <label>Turno
+      <select name="turno" id="turno" required>
+        {% for item in opts.turnos %}<option value="{{ item }}" {% if item == turno %}selected{% endif %}>{{ item }}</option>{% endfor %}
+      </select>
+    </label>
+  </div>
+
+  <label>Nombre de la tarea
+    <input type="text" name="nombre_tarea" id="nombre_tarea" placeholder="Ej: Reparacion fisura tolva CAEX 121" required>
+  </label>
+
+  <label>Supervisor
+    <select name="supervisor" id="supervisor" required>
+      {% for item in opts.supervisores %}<option value="{{ item }}" {% if supervisor == item or (last and last.supervisor == item) %}selected{% endif %}>{{ item }}</option>{% endfor %}
+    </select>
+  </label>
+
+  <div class="grid one">
+    <label>Equipo / frente
+      <select name="equipo" id="equipo" required>{% for item in opts.equipos %}<option value="{{ item }}">{{ item }}</option>{% endfor %}</select>
+    </label>
+  </div>
+  <input type="hidden" name="cuadrilla" id="cuadrilla" value="Auto">
+
+  <label>Actividad
+    <select name="actividad" id="actividad" required>{% for item in opts.actividades %}<option value="{{ item }}">{{ item }}</option>{% endfor %}</select>
+  </label>
+
+  <section class="worker-dropdown" id="workerDropdown">
+    <label>Personas asignadas</label>
+    <button type="button" class="worker-trigger" id="workerTrigger">
+      <span id="workerTriggerText">Seleccionar personas</span>
+      <strong id="workerBadge">0/8</strong>
+    </button>
+    <div class="worker-menu" id="workerMenu">
+      <div class="worker-menu-head">
+        <span id="workerLimitNote">Selecciona hasta 8 personas.</span>
+        <div class="mini-actions">
+          <button type="button" id="selectAllWorkers">Todo el personal</button>
+          <button type="button" id="clearWorkers">Limpiar</button>
+        </div>
+      </div>
+      <div class="worker-list">
+        {% for item in opts.trabajadores %}
+        <label class="worker-check">
+          <input type="checkbox" name="trabajadores_asignados" value="{{ item }}">
+          <span>{{ item }}</span>
+        </label>
+        {% endfor %}
+      </div>
+    </div>
+  </section>
+
+  <div class="grid two">
+    <label>Hora inicio
+      <input type="time" name="hora_inicio" id="hora_inicio" step="300" required>
+    </label>
+    <label>Hora termino
+      <input type="time" name="hora_termino" id="hora_termino" step="300" required>
+    </label>
+  </div>
+
+  <div class="timechips" id="timechips"></div>
+
+  <div class="grid two">
+    <label>Estado
+      <select name="estado" id="estado" required>{% for item in opts.estados %}<option value="{{ item }}">{{ item }}</option>{% endfor %}</select>
+    </label>
+    <label>Causal
+      <select name="causal" id="causal" required>{% for item in opts.causales %}<option value="{{ item }}">{{ item }}</option>{% endfor %}</select>
+    </label>
+  </div>
+
+  <div class="partial-box" id="partialBox">
+    <label>HH directas parcial
+      <input type="number" min="0" step="0.25" name="hh_directas_split" id="hh_directas_split" placeholder="Opcional">
+    </label>
+    <label>HH indirectas parcial
+      <input type="number" min="0" step="0.25" name="hh_indirectas_split" id="hh_indirectas_split" placeholder="Opcional">
+    </label>
+  </div>
+
+  <label>Observacion opcional
+    <textarea name="observacion" id="observacion" rows="2" placeholder="Solo si aporta trazabilidad"></textarea>
+  </label>
+
+  <div class="prep-box">
+    <strong>Inicio de tarea</strong>
+    <span>ART: Si · Check list: Si · Permisos de trabajo: Si</span>
+  </div>
+
+  <div class="summary" id="formSummary">
+    <div><span>Duracion bruta</span><strong id="sumDuracion">0 h</strong></div>
+    <div><span>Colacion</span><strong id="sumColacion">0 h</strong></div>
+    <div><span>Duracion efectiva</span><strong id="sumEfectiva">0 h</strong></div>
+    <div><span>Personas asignadas</span><strong id="sumPersonas">0</strong></div>
+    <div><span>HH generadas</span><strong id="sumHH">0 HH</strong></div>
+    <p id="sumClasificacion">Clasificacion segun estado y causal.</p>
+  </div>
+  <div class="alert internal-alert" id="hhLimitAlert" hidden></div>
+
+  <button class="submit-btn" type="submit">Guardar registro</button>
+</form>
+
+<script type="application/json" id="lastFrenteData">{{ dict(last) | tojson if last else 'null' }}</script>
+<script type="application/json" id="hhPersonasData">{{ hh_personas | tojson }}</script>
+
+<section class="list-section">
+  <h2>Registros del turno</h2>
+  {% for row in rows %}
+  <article class="record-card">
+    <div><strong>{{ row.nombre_tarea or row.equipo }}</strong><span>{{ row.hora_inicio }}-{{ row.hora_termino }}</span></div>
+    <p>{{ row.equipo }}</p>
+    <p>{{ row.actividad }}</p>
+    <small>{{ row.estado }} · {{ row.causal }} · {{ row.hh_total }} HH</small>
+    <small>Bruta {{ row.duracion_bruta or row.duracion }} h · Colacion {{ row.colacion_descontada or 0 }} h · Efectiva {{ row.duracion }} h</small>
+    {% if row.advertencia %}<em>{{ row.advertencia }}</em>{% endif %}
+  </article>
+  {% else %}
+  <p class="empty">Sin registros para este turno.</p>
+  {% endfor %}
+</section>
+{% endblock %}

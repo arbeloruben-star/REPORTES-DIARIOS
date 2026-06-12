@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="screen-head">
+  <div>
+    <h1>Resumen diario</h1>
+    <p>{{ fecha }} · {{ turno }}</p>
+  </div>
+  <span class="status {{ data.semaforo|lower }}">{{ data.semaforo }}</span>
+</section>
+<form class="filters" method="get">
+  <input type="date" name="fecha" value="{{ fecha }}">
+  <select name="turno">{% for item in opts.turnos %}<option value="{{ item }}" {% if item == turno %}selected{% endif %}>{{ item }}</option>{% endfor %}</select>
+  <button>Filtrar</button>
+</form>
+<section class="metric-grid">
+  <div><span>Dotacion presente</span><strong>{{ data.presentes }}</strong></div>
+  <div><span>HH disponibles</span><strong>{{ data.disponibles }}</strong></div>
+  <div><span>HH directas</span><strong>{{ data.directas }}</strong></div>
+  <div><span>HH indirectas/no usadas</span><strong>{{ data.indirectas }}</strong></div>
+  <div><span>HH requeridas</span><strong>{{ data.requeridas }}</strong></div>
+  <div><span>Brecha HH</span><strong>{{ data.brecha }}</strong></div>
+  <div><span>Equipos intervenidos</span><strong>{{ data.equipos }}</strong></div>
+  <div><span>Equipos no liberados</span><strong>{{ data.no_liberados }}</strong></div>
+</section>
+<section class="breakdown">
+  <h2>Personas asistentes</h2>
+  {% for persona in asistentes %}
+  <div class="bar-row"><span>{{ persona.trabajador }}</span><strong>{{ persona.cargo }}</strong></div>
+  {% else %}
+  <p class="empty">Sin asistencia enviada para este turno.</p>
+  {% endfor %}
+</section>
+<section class="breakdown">
+  <h2>Brechas operacionales</h2>
+  {% for k, v in data.categorias.items() %}
+  <div class="bar-row"><span>{{ k }}</span><strong>{{ v|round(2) }} HH</strong></div>
+  {% endfor %}
+</section>
+<section class="breakdown">
+  <h2>Principales causales</h2>
+  {% for c in data.causales %}
+  <div class="bar-row"><span>{{ c.causal }}</span><strong>{{ c.total }}</strong></div>
+  {% else %}
+  <p class="empty">Sin causales registradas.</p>
+  {% endfor %}
+</section>
+{% endblock %}

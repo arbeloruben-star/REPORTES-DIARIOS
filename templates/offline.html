@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+{% block body_class %}home-page{% endblock %}
+{% block content %}
+<section class="home flow-home">
+  <div class="offline-card">
+    <h1>Sin conexion</h1>
+    <p>La app esta instalada y puede abrir esta pantalla, pero para guardar asistencia o actividades necesita volver a tener senal.</p>
+    <a class="ghost-btn primary-action" href="{{ url_for('index') }}">Reintentar</a>
+  </div>
+</section>
+{% endblock %}

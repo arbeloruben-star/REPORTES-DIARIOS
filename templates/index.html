@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+{% block body_class %}home-page{% endblock %}
+{% block content %}
+<section class="home flow-home">
+  <div class="screen-head">
+    <div>
+      <h1>Reportabilidad diaria</h1>
+      <p>
+        {% if flujo.asistencia_enviada %}
+        Turno {{ flujo.contexto.turno }} · {{ flujo.contexto.fecha }}{% if flujo.contexto.supervisor %} · {{ flujo.contexto.supervisor }}{% endif %}
+        {% else %}
+        Inicia registrando asistencia del turno
+        {% endif %}
+      </p>
+    </div>
+  </div>
+
+  <div class="flow-board">
+    <a class="flow-card ready" href="{{ url_for('asistencia', turno=flujo.contexto.turno) }}">
+      <span class="flow-step">1</span>
+      <div>
+        <strong>Asistencia diaria</strong>
+        {% if flujo.asistencia_enviada %}
+        <small>Enviada · {{ flujo.asistentes }} personas presentes</small>
+        {% else %}
+        <small>Pendiente de envio</small>
+        {% endif %}
+      </div>
+      <em>{{ "Revisar" if flujo.asistencia_enviada else "Iniciar" }}</em>
+    </a>
+
+    <a class="flow-card {% if flujo.asistencia_enviada %}ready{% else %}blocked{% endif %}"
+       href="{% if flujo.asistencia_enviada %}{{ url_for('frentes', fecha=flujo.contexto.fecha, turno=flujo.contexto.turno, supervisor=flujo.contexto.supervisor) }}{% else %}{{ url_for('asistencia') }}{% endif %}">
+      <span class="flow-step">2</span>
+      <div>
+        <strong>Registro de actividades</strong>
+        {% if flujo.asistencia_enviada %}
+        <small>{{ flujo.actividades }} actividad(es) registradas</small>
+        {% else %}
+        <small>Disponible despues de asistencia</small>
+        {% endif %}
+      </div>
+      <em>{{ "Cargar" if flujo.asistencia_enviada else "Pendiente" }}</em>
+    </a>
+
+    <a class="flow-card {% if flujo.actividades and flujo.validaciones.total %}review{% elif flujo.actividades %}ready{% else %}blocked{% endif %}"
+       href="{{ url_for('dashboard', fecha=flujo.contexto.fecha, turno=flujo.contexto.turno) }}">
+      <span class="flow-step">3</span>
+      <div>
+        <strong>Resumen diario</strong>
+        {% if flujo.validaciones.total %}
+        <small>{{ flujo.validaciones.total }} observacion(es) internas</small>
+        {% elif flujo.actividades %}
+        <small>Sin observaciones internas</small>
+        {% else %}
+        <small>Disponible al registrar actividades</small>
+        {% endif %}
+      </div>
+      <em>{{ "Revisar" if flujo.validaciones.total else "Ver" }}</em>
+    </a>
+
+    <a class="flow-card export {% if flujo.actividades and not flujo.validaciones.total %}ready{% elif flujo.actividades %}review{% else %}blocked{% endif %}"
+       href="{{ url_for('exportar', fecha=flujo.contexto.fecha, turno=flujo.contexto.turno) }}">
+      <span class="flow-step">4</span>
+      <div>
+        <strong>Exportar Excel</strong>
+        {% if flujo.actividades and not flujo.validaciones.total %}
+        <small>Listo para exportar</small>
+        {% elif flujo.actividades %}
+        <small>Revisar cierre interno antes de enviar</small>
+        {% else %}
+        <small>Se habilita al final del turno</small>
+        {% endif %}
+      </div>
+      <em>Excel</em>
+    </a>
+  </div>
+</section>
+{% endblock %}

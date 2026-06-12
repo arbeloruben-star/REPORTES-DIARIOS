@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="screen-head">
+  <div>
+    <h1>Asistencia diaria</h1>
+    <p>Primer paso del turno</p>
+  </div>
+  <div class="head-actions">
+    {% if ultima_asistencia %}
+    <a class="ghost-btn" href="{{ url_for('exportar_asistencia', fecha=ultima_asistencia.fecha, turno=ultima_asistencia.turno) }}">Descargar asistencia</a>
+    {% endif %}
+    <a class="ghost-btn" href="{{ url_for('frentes') }}">Ir a actividades</a>
+  </div>
+</section>
+
+<form class="field-form" method="post" id="attendanceForm">
+  <div class="grid two">
+    <label>Fecha
+      <input type="date" name="fecha" value="{{ opts.hoy }}" required>
+    </label>
+    <label>Turno
+      <select name="turno" id="turnoSelect">
+        {% for item in opts.turnos %}
+        <option {% if item == turno_sel %}selected{% endif %}>{{ item }}</option>
+        {% endfor %}
+      </select>
+    </label>
+  </div>
+
+  <label>Supervisor
+    <select name="supervisor" required>
+      {% for item in opts.supervisores %}<option value="{{ item }}">{{ item }}</option>{% endfor %}
+    </select>
+  </label>
+
+  <div class="grid two">
+    <label>Ingreso
+      <input type="time" name="hora_ingreso" id="hora_ingreso" value="{{ hora_ing }}">
+    </label>
+    <label>Salida
+      <input type="time" name="hora_salida" id="hora_salida" value="{{ hora_sal }}">
+    </label>
+  </div>
+
+  <section class="worker-dropdown" id="attendanceDropdown">
+    <label>Soldadores presentes</label>
+    <button type="button" class="worker-trigger" id="attendanceTrigger">
+      <span id="attendanceTriggerText">Seleccionar soldadores presentes</span>
+      <strong id="attendanceBadge">0</strong>
+    </button>
+    <div class="worker-menu" id="attendanceMenu">
+      <div class="worker-menu-head">
+        <span id="attendanceCount">0 seleccionados</span>
+        <div class="mini-actions">
+          <button type="button" id="selectAllAttendance">Todo el personal</button>
+          <button type="button" id="clearAttendance">Limpiar</button>
+        </div>
+      </div>
+      <div class="worker-list">
+        {% for item in opts.trabajadores_catalogo %}
+        <label class="worker-check">
+          <input type="checkbox" name="trabajadores_presentes" value="{{ item }}">
+          <span>{{ item }}</span>
+        </label>
+        {% endfor %}
+      </div>
+    </div>
+  </section>
+
+  <label>Agregar persona manualmente
+    <textarea name="trabajadores_manual" rows="2" placeholder="Nombre Apellido. Si son varios, uno por linea."></textarea>
+    <span class="field-note">Se agregara a la asistencia del turno y quedara disponible para futuras selecciones.</span>
+  </label>
+
+  <div class="form-actions">
+    <button class="submit-btn secondary" type="submit" name="accion" value="guardar">Guardar borrador</button>
+    <button class="submit-btn" type="submit" name="accion" value="enviar">Enviar asistencia y habilitar frentes</button>
+  </div>
+</form>
+{% endblock %}

@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="screen-head"><div><h1>Cuadrillas</h1><p>Dotacion base</p></div></section>
+<form class="field-form" method="post">
+  <label>Nombre cuadrilla <input name="nombre" required></label>
+  <label>Trabajador <input name="trabajador" required></label>
+  <div class="grid two">
+    <label>Cargo <input name="cargo" required></label>
+    <label>Especialidad <input name="especialidad" required></label>
+  </div>
+  <label class="check"><input type="checkbox" name="activo" checked> Activo</label>
+  <button class="submit-btn">Guardar trabajador</button>
+</form>
+<section class="table-wrap"><table><thead><tr><th>Cuadrilla</th><th>Trabajador</th><th>Cargo</th><th>Especialidad</th><th>Activo</th></tr></thead><tbody>
+{% for r in rows %}<tr><td>{{ r.nombre }}</td><td>{{ r.trabajador }}</td><td>{{ r.cargo }}</td><td>{{ r.especialidad }}</td><td>{{ 'Si' if r.activo else 'No' }}</td></tr>{% endfor %}
+</tbody></table></section>
+{% endblock %}
