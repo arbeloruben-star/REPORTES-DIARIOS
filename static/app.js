@@ -200,6 +200,13 @@ function initFrentes() {
 
   form.addEventListener("input", updateSummary);
   form.addEventListener("change", updateSummary);
+  form.addEventListener("submit", (event) => {
+    const alertBox = document.getElementById("hhLimitAlert");
+    if (alertBox && !alertBox.hidden) {
+      event.preventDefault();
+      alertBox.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+  });
 
   renderTimeChips(form);
   if (!form.hora_inicio.value && !form.hora_termino.value) applyFrenteShiftHours(form);

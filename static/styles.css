@@ -662,6 +662,31 @@ textarea { resize: vertical; }
   font-style: normal;
 }
 .record-card em { color: var(--amber); margin-top: 6px; }
+.record-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 34px;
+  margin-top: 9px;
+  padding: 7px 10px;
+  border-radius: 6px;
+  background: #e9f1f7;
+  color: var(--brand-blue);
+  font-size: 13px;
+  font-weight: 800;
+  text-decoration: none;
+}
+.edit-alert {
+  display: grid;
+  gap: 6px;
+  background: #fff8e6;
+  border-color: #f6d58a;
+  color: var(--amber);
+}
+.edit-alert a {
+  color: var(--brand-blue);
+  font-weight: 800;
+}
 .empty { color: var(--muted); }
 .table-wrap {
   overflow-x: auto;

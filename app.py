@@ -325,7 +325,7 @@ def seed(conn):
     conn.executemany("INSERT INTO cuadrillas(nombre, trabajador, cargo, especialidad, activo) VALUES (?, ?, ?, ?, 1)", personas)
 
 
-def insert_frente(conn, form):
+def frente_form_data(conn, form):
     fecha = form.get("fecha") or date.today().isoformat()
     turno = form.get("turno") or "Dia"
     cuadrilla = form.get("cuadrilla") or "Auto"
@@ -350,6 +350,41 @@ def insert_frente(conn, form):
         float(split_d) if split_d not in (None, "") else None,
         float(split_i) if split_i not in (None, "") else None,
     )
+    return {
+        "fecha": fecha,
+        "turno": turno,
+        "supervisor": form.get("supervisor", ""),
+        "nombre_tarea": form.get("nombre_tarea", ""),
+        "equipo": form.get("equipo", ""),
+        "actividad": form.get("actividad", ""),
+        "cuadrilla": cuadrilla,
+        "hora_inicio": hora_inicio,
+        "hora_termino": hora_termino,
+        "estado": form.get("estado", ""),
+        "causal": form.get("causal", ""),
+        "observacion": form.get("observacion", ""),
+        "duracion_bruta": duracion_bruta,
+        "colacion": colacion,
+        "duracion": duracion,
+        "personas": personas,
+        "hh_total": hh_total,
+        "cls": cls,
+        "asignados": asignados,
+    }
+
+
+def hh_excedidas_guardado(conn, data: dict, frente_id: int | None = None) -> list[dict]:
+    actuales = hh_asignadas_por_persona(conn, data["fecha"], data["turno"], exclude_id=frente_id)
+    excedidos = []
+    for nombre in data["asignados"]:
+        total = round(actuales.get(nombre, 0.0) + data["duracion"], 2)
+        if total > LIMITE_HH_PERSONA:
+            excedidos.append({"nombre": nombre, "hh": total})
+    return excedidos
+
+
+def insert_frente(conn, form):
+    data = frente_form_data(conn, form)
     conn.execute(
         """INSERT INTO frentes(
             fecha, turno, supervisor, nombre_tarea, equipo, actividad, cuadrilla,
@@ -360,13 +395,36 @@ def insert_frente(conn, form):
             trabajadores_asignados, personas_asignadas, art, checklist, permiso_trabajo
         ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
         (
-            fecha, turno, form.get("supervisor", ""), form.get("nombre_tarea", ""),
-            form.get("equipo", ""), form.get("actividad", ""), cuadrilla,
-            hora_inicio, hora_termino, form.get("estado", ""), form.get("causal", ""),
-            form.get("observacion", ""), duracion_bruta, colacion, duracion, personas, hh_total,
-            cls["hh_directas"], cls["hh_indirectas"], cls["hh_no_utilizadas"], cls["advertencia"],
-            cls["brecha_tipo"], cls["brecha_categoria"], datetime.now().isoformat(timespec="seconds"),
-            json.dumps(asignados, ensure_ascii=False), personas, "Si", "Si", "Si",
+            data["fecha"], data["turno"], data["supervisor"], data["nombre_tarea"],
+            data["equipo"], data["actividad"], data["cuadrilla"],
+            data["hora_inicio"], data["hora_termino"], data["estado"], data["causal"],
+            data["observacion"], data["duracion_bruta"], data["colacion"], data["duracion"], data["personas"], data["hh_total"],
+            data["cls"]["hh_directas"], data["cls"]["hh_indirectas"], data["cls"]["hh_no_utilizadas"], data["cls"]["advertencia"],
+            data["cls"]["brecha_tipo"], data["cls"]["brecha_categoria"], datetime.now().isoformat(timespec="seconds"),
+            json.dumps(data["asignados"], ensure_ascii=False), data["personas"], "Si", "Si", "Si",
+        ),
+    )
+
+
+def update_frente(conn, frente_id: int, form):
+    data = frente_form_data(conn, form)
+    conn.execute(
+        """UPDATE frentes SET
+            fecha = ?, turno = ?, supervisor = ?, nombre_tarea = ?, equipo = ?, actividad = ?, cuadrilla = ?,
+            hora_inicio = ?, hora_termino = ?, estado = ?, causal = ?, observacion = ?,
+            duracion_bruta = ?, colacion_descontada = ?, duracion = ?, personas_presentes = ?,
+            hh_total = ?, hh_directas = ?, hh_indirectas = ?, hh_no_utilizadas = ?,
+            advertencia = ?, brecha_tipo = ?, brecha_categoria = ?,
+            trabajadores_asignados = ?, personas_asignadas = ?
+        WHERE id = ?""",
+        (
+            data["fecha"], data["turno"], data["supervisor"], data["nombre_tarea"],
+            data["equipo"], data["actividad"], data["cuadrilla"],
+            data["hora_inicio"], data["hora_termino"], data["estado"], data["causal"],
+            data["observacion"], data["duracion_bruta"], data["colacion"], data["duracion"], data["personas"],
+            data["hh_total"], data["cls"]["hh_directas"], data["cls"]["hh_indirectas"], data["cls"]["hh_no_utilizadas"],
+            data["cls"]["advertencia"], data["cls"]["brecha_tipo"], data["cls"]["brecha_categoria"],
+            json.dumps(data["asignados"], ensure_ascii=False), data["personas"], frente_id,
         ),
     )
 
@@ -507,12 +565,28 @@ def cuadrillas():
 def frentes():
     with db() as conn:
         if request.method == "POST":
-            insert_frente(conn, request.form)
+            frente_id = int(request.form.get("frente_id") or 0) or None
+            data = frente_form_data(conn, request.form)
+            excedidos = hh_excedidas_guardado(conn, data, frente_id)
+            if excedidos:
+                detalle = "; ".join([f"{x['nombre']} quedaria con {x['hh']} HH" for x in excedidos])
+                return redirect(url_for(
+                    "frentes",
+                    fecha=data["fecha"],
+                    turno=data["turno"],
+                    supervisor=data["supervisor"],
+                    edit_id=frente_id or "",
+                    error=f"No se guardo: {detalle}. Ajusta personas u horario antes de continuar.",
+                ))
+            if frente_id:
+                update_frente(conn, frente_id, request.form)
+            else:
+                insert_frente(conn, request.form)
             return redirect(url_for(
                 "frentes",
-                fecha=request.form.get("fecha") or date.today().isoformat(),
-                turno=request.form.get("turno") or "Dia",
-                supervisor=request.form.get("supervisor") or "",
+                fecha=data["fecha"],
+                turno=data["turno"],
+                supervisor=data["supervisor"],
             ))
         ultima_asistencia = conn.execute(
             """SELECT fecha, turno, supervisor
@@ -526,16 +600,24 @@ def frentes():
         supervisor = request.args.get("supervisor") or (ultima_asistencia["supervisor"] if ultima_asistencia else "")
         rows = conn.execute("SELECT * FROM frentes WHERE fecha = ? AND turno = ? ORDER BY id DESC", (fecha, turno)).fetchall()
         last = conn.execute("SELECT * FROM frentes WHERE fecha = ? AND turno = ? ORDER BY id DESC LIMIT 1", (fecha, turno)).fetchone()
+        edit_id = int(request.args.get("edit_id") or 0)
+        edit = conn.execute("SELECT * FROM frentes WHERE id = ?", (edit_id,)).fetchone() if edit_id else None
+        edit_asignados = []
+        if edit:
+            try:
+                edit_asignados = json.loads(edit["trabajadores_asignados"] or "[]")
+            except Exception:
+                edit_asignados = []
         if supervisor:
             present_count_turno = scalar(conn, "SELECT COUNT(*) FROM asistencia WHERE fecha = ? AND turno = ? AND supervisor = ? AND estado = 'Presente' AND cargo = 'Soldador' AND enviado_en IS NOT NULL", (fecha, turno, supervisor))
             pending_count_turno = scalar(conn, "SELECT COUNT(*) FROM asistencia WHERE fecha = ? AND turno = ? AND supervisor = ? AND estado = 'Presente' AND enviado_en IS NULL", (fecha, turno, supervisor))
         else:
             present_count_turno = scalar(conn, "SELECT COUNT(*) FROM asistencia WHERE fecha = ? AND turno = ? AND estado = 'Presente' AND cargo = 'Soldador' AND enviado_en IS NOT NULL", (fecha, turno))
             pending_count_turno = scalar(conn, "SELECT COUNT(*) FROM asistencia WHERE fecha = ? AND turno = ? AND estado = 'Presente' AND enviado_en IS NULL", (fecha, turno))
-        return render_template("frentes.html", rows=rows, last=last, opts=get_options(conn, fecha, turno, supervisor),
+        return render_template("frentes.html", rows=rows, last=last, edit=edit, edit_asignados=edit_asignados, opts=get_options(conn, fecha, turno, supervisor),
                                fecha=fecha, turno=turno, supervisor=supervisor,
                                error=request.args.get("error"),
-                               hh_personas=hh_asignadas_por_persona(conn, fecha, turno),
+                               hh_personas=hh_asignadas_por_persona(conn, fecha, turno, exclude_id=edit_id if edit else None),
                                present_count_turno=present_count_turno, pending_count_turno=pending_count_turno)
 
 
@@ -604,12 +686,20 @@ def cierre():
     with db() as conn:
         rows = conn.execute("SELECT * FROM frentes WHERE fecha = ? AND turno = ? ORDER BY hora_inicio, id", (fecha, turno)).fetchall()
         validaciones = validaciones_turno(conn, fecha, turno)
-        return render_template("cierre.html", rows=rows, data=dashboard_data(conn, fecha, turno), validaciones=validaciones, fecha=fecha, turno=turno, opts=get_options(conn))
+        return render_template("cierre.html", rows=rows, data=dashboard_data(conn, fecha, turno), validaciones=validaciones, fecha=fecha, turno=turno, opts=get_options(conn), error=request.args.get("error"))
 
 
-def hh_asignadas_por_persona(conn, fecha: str, turno: str) -> dict[str, float]:
+def hh_asignadas_por_persona(conn, fecha: str, turno: str, exclude_id: int | None = None) -> dict[str, float]:
     hh_por_persona: dict[str, float] = {}
-    frentes_rows = conn.execute("SELECT trabajadores_asignados, duracion FROM frentes WHERE fecha = ? AND turno = ?", (fecha, turno)).fetchall()
+    params: list = [fecha, turno]
+    extra = ""
+    if exclude_id:
+        extra = " AND id <> ?"
+        params.append(exclude_id)
+    frentes_rows = conn.execute(
+        f"SELECT trabajadores_asignados, duracion FROM frentes WHERE fecha = ? AND turno = ?{extra}",
+        tuple(params),
+    ).fetchall()
     for f in frentes_rows:
         try:
             asignados = json.loads(f["trabajadores_asignados"] or "[]")
@@ -773,6 +863,14 @@ def exportar():
     fecha = request.args.get("fecha", date.today().isoformat())
     turno = request.args.get("turno", "Dia")
     with db() as conn:
+        validaciones = validaciones_turno(conn, fecha, turno)
+        if validaciones["excedidos"]:
+            return redirect(url_for(
+                "cierre",
+                fecha=fecha,
+                turno=turno,
+                error="No se puede descargar el informe: hay personas sobre 11 HH. Edita los registros antes de cerrar.",
+            ))
         wb = Workbook()
         wb.remove(wb.active)
         _hoja_asistencia(conn, wb, fecha, turno)

@@ -26,6 +26,13 @@
 {% endif %}
 
 <form class="field-form mobile-first" method="post" id="frenteForm">
+  {% if edit %}
+  <div class="alert edit-alert">
+    Editando registro #{{ edit.id }}. Ajusta los datos y presiona Actualizar registro.
+    <a href="{{ url_for('frentes', fecha=fecha, turno=turno, supervisor=supervisor) }}">Cancelar edicion</a>
+  </div>
+  {% endif %}
+  <input type="hidden" name="frente_id" value="{{ edit.id if edit else '' }}">
   <div class="quickbar">
     <button type="button" class="quick" data-action="start">Iniciar frente</button>
     <button type="button" class="quick" data-action="close">Cerrar frente</button>
@@ -35,34 +42,34 @@
 
   <div class="grid two">
     <label>Fecha
-      <input type="date" name="fecha" id="fecha" value="{{ fecha or opts.hoy }}" required>
+      <input type="date" name="fecha" id="fecha" value="{{ edit.fecha if edit else (fecha or opts.hoy) }}" required>
     </label>
     <label>Turno
       <select name="turno" id="turno" required>
-        {% for item in opts.turnos %}<option value="{{ item }}" {% if item == turno %}selected{% endif %}>{{ item }}</option>{% endfor %}
+        {% for item in opts.turnos %}<option value="{{ item }}" {% if item == (edit.turno if edit else turno) %}selected{% endif %}>{{ item }}</option>{% endfor %}
       </select>
     </label>
   </div>
 
   <label>Nombre de la tarea
-    <input type="text" name="nombre_tarea" id="nombre_tarea" placeholder="Ej: Reparacion fisura tolva CAEX 121" required>
+    <input type="text" name="nombre_tarea" id="nombre_tarea" value="{{ edit.nombre_tarea if edit else '' }}" placeholder="Ej: Reparacion fisura tolva CAEX 121" required>
   </label>
 
   <label>Supervisor
     <select name="supervisor" id="supervisor" required>
-      {% for item in opts.supervisores %}<option value="{{ item }}" {% if supervisor == item or (last and last.supervisor == item) %}selected{% endif %}>{{ item }}</option>{% endfor %}
+      {% for item in opts.supervisores %}<option value="{{ item }}" {% if (edit and edit.supervisor == item) or (not edit and (supervisor == item or (last and last.supervisor == item))) %}selected{% endif %}>{{ item }}</option>{% endfor %}
     </select>
   </label>
 
   <div class="grid one">
     <label>Equipo / frente
-      <select name="equipo" id="equipo" required>{% for item in opts.equipos %}<option value="{{ item }}">{{ item }}</option>{% endfor %}</select>
+      <select name="equipo" id="equipo" required>{% for item in opts.equipos %}<option value="{{ item }}" {% if edit and edit.equipo == item %}selected{% endif %}>{{ item }}</option>{% endfor %}</select>
     </label>
   </div>
   <input type="hidden" name="cuadrilla" id="cuadrilla" value="Auto">
 
   <label>Actividad
-    <select name="actividad" id="actividad" required>{% for item in opts.actividades %}<option value="{{ item }}">{{ item }}</option>{% endfor %}</select>
+    <select name="actividad" id="actividad" required>{% for item in opts.actividades %}<option value="{{ item }}" {% if edit and edit.actividad == item %}selected{% endif %}>{{ item }}</option>{% endfor %}</select>
   </label>
 
   <section class="worker-dropdown" id="workerDropdown">
@@ -82,7 +89,7 @@
       <div class="worker-list">
         {% for item in opts.trabajadores %}
         <label class="worker-check">
-          <input type="checkbox" name="trabajadores_asignados" value="{{ item }}">
+          <input type="checkbox" name="trabajadores_asignados" value="{{ item }}" {% if item in edit_asignados %}checked{% endif %}>
           <span>{{ item }}</span>
         </label>
         {% endfor %}
@@ -92,10 +99,10 @@
 
   <div class="grid two">
     <label>Hora inicio
-      <input type="time" name="hora_inicio" id="hora_inicio" step="300" required>
+      <input type="time" name="hora_inicio" id="hora_inicio" value="{{ edit.hora_inicio if edit else '' }}" step="300" required>
     </label>
     <label>Hora termino
-      <input type="time" name="hora_termino" id="hora_termino" step="300" required>
+      <input type="time" name="hora_termino" id="hora_termino" value="{{ edit.hora_termino if edit else '' }}" step="300" required>
     </label>
   </div>
 
@@ -103,10 +110,10 @@
 
   <div class="grid two">
     <label>Estado
-      <select name="estado" id="estado" required>{% for item in opts.estados %}<option value="{{ item }}">{{ item }}</option>{% endfor %}</select>
+      <select name="estado" id="estado" required>{% for item in opts.estados %}<option value="{{ item }}" {% if edit and edit.estado == item %}selected{% endif %}>{{ item }}</option>{% endfor %}</select>
     </label>
     <label>Causal
-      <select name="causal" id="causal" required>{% for item in opts.causales %}<option value="{{ item }}">{{ item }}</option>{% endfor %}</select>
+      <select name="causal" id="causal" required>{% for item in opts.causales %}<option value="{{ item }}" {% if edit and edit.causal == item %}selected{% endif %}>{{ item }}</option>{% endfor %}</select>
     </label>
   </div>
 
@@ -120,7 +127,7 @@
   </div>
 
   <label>Observacion opcional
-    <textarea name="observacion" id="observacion" rows="2" placeholder="Solo si aporta trazabilidad"></textarea>
+    <textarea name="observacion" id="observacion" rows="2" placeholder="Solo si aporta trazabilidad">{{ edit.observacion if edit else '' }}</textarea>
   </label>
 
   <div class="prep-box">
@@ -138,7 +145,7 @@
   </div>
   <div class="alert internal-alert" id="hhLimitAlert" hidden></div>
 
-  <button class="submit-btn" type="submit">Guardar registro</button>
+  <button class="submit-btn" type="submit">{{ "Actualizar registro" if edit else "Guardar registro" }}</button>
 </form>
 
 <script type="application/json" id="lastFrenteData">{{ dict(last) | tojson if last else 'null' }}</script>
@@ -154,6 +161,7 @@
     <small>{{ row.estado }} · {{ row.causal }} · {{ row.hh_total }} HH</small>
     <small>Bruta {{ row.duracion_bruta or row.duracion }} h · Colacion {{ row.colacion_descontada or 0 }} h · Efectiva {{ row.duracion }} h</small>
     {% if row.advertencia %}<em>{{ row.advertencia }}</em>{% endif %}
+    <a class="record-action" href="{{ url_for('frentes', fecha=row.fecha, turno=row.turno, supervisor=row.supervisor, edit_id=row.id) }}">Editar registro</a>
   </article>
   {% else %}
   <p class="empty">Sin registros para este turno.</p>
