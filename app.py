@@ -454,23 +454,31 @@ def offline():
 @app.route("/")
 def index():
     with db() as conn:
-        ultima_asistencia = conn.execute(
-            """SELECT fecha, turno, supervisor, enviado_en
-               FROM asistencia
-               WHERE estado = 'Presente' AND enviado_en IS NOT NULL
-               ORDER BY enviado_en DESC, id DESC
-               LIMIT 1"""
-        ).fetchone()
-        fecha = ultima_asistencia["fecha"] if ultima_asistencia else date.today().isoformat()
-        turno = ultima_asistencia["turno"] if ultima_asistencia else "Dia"
-        supervisor = ultima_asistencia["supervisor"] if ultima_asistencia else ""
-        asistencia_enviada = ultima_asistencia is not None
+        fecha = request.args.get("fecha") or date.today().isoformat()
+        turno = request.args.get("turno") or "Dia"
+        supervisor = request.args.get("supervisor") or ""
+        asistencia_enviada = False
+        if request.args.get("fecha") and request.args.get("turno"):
+            params = [fecha, turno]
+            supervisor_filter = ""
+            if supervisor:
+                supervisor_filter = "AND supervisor = ?"
+                params.append(supervisor)
+            asistencia_enviada = scalar(
+                conn,
+                f"""SELECT COUNT(*) FROM asistencia
+                    WHERE fecha = ? AND turno = ? AND estado = 'Presente'
+                    AND enviado_en IS NOT NULL {supervisor_filter}""",
+                tuple(params),
+            ) > 0
         asistentes = scalar(
             conn,
-            "SELECT COUNT(*) FROM asistencia WHERE fecha = ? AND turno = ? AND estado = 'Presente' AND enviado_en IS NOT NULL",
-            (fecha, turno),
+            f"""SELECT COUNT(*) FROM asistencia
+                WHERE fecha = ? AND turno = ? AND estado = 'Presente'
+                AND enviado_en IS NOT NULL {"AND supervisor = ?" if supervisor else ""}""",
+            (fecha, turno, supervisor) if supervisor else (fecha, turno),
         ) if asistencia_enviada else 0
-        actividades = scalar(conn, "SELECT COUNT(*) FROM frentes WHERE fecha = ? AND turno = ?", (fecha, turno))
+        actividades = scalar(conn, "SELECT COUNT(*) FROM frentes WHERE fecha = ? AND turno = ?", (fecha, turno)) if asistencia_enviada else 0
         validaciones = validaciones_turno(conn, fecha, turno) if asistencia_enviada else {"total": 0}
         contexto = {"fecha": fecha, "turno": turno, "supervisor": supervisor}
         flujo = {
