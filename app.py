@@ -546,7 +546,23 @@ def asistencia():
                 )
             conn.executemany("INSERT OR IGNORE INTO trabajadores(nombre) VALUES (?)", [(x,) for x in manuales])
             if accion == "enviar":
-                return redirect(url_for("frentes", fecha=fecha, turno=turno, supervisor=supervisor))
+                try:
+                    send_asistencia_turno(fecha, turno, supervisor)
+                    return redirect(url_for(
+                        "frentes",
+                        fecha=fecha,
+                        turno=turno,
+                        supervisor=supervisor,
+                        msg="Asistencia enviada y correo despachado correctamente.",
+                    ))
+                except Exception as exc:
+                    return redirect(url_for(
+                        "frentes",
+                        fecha=fecha,
+                        turno=turno,
+                        supervisor=supervisor,
+                        error=f"Asistencia guardada, pero no se pudo enviar el correo: {exc}",
+                    ))
             return redirect(url_for("asistencia"))
         rows = conn.execute("SELECT * FROM asistencia ORDER BY fecha DESC, turno, supervisor, enviado_en DESC, trabajador").fetchall()
         ultima_asistencia = conn.execute(
@@ -880,6 +896,26 @@ def send_excel_email(kind: str, subject: str, body: str, attachment_path: Path, 
         smtp.send_message(msg, from_addr=sender, to_addrs=recipients)
 
 
+def send_asistencia_turno(fecha: str, turno: str, supervisor: str):
+    with db() as conn:
+        enviados = scalar(
+            conn,
+            "SELECT COUNT(*) FROM asistencia WHERE fecha = ? AND turno = ? AND enviado_en IS NOT NULL",
+            (fecha, turno),
+        )
+        if not enviados:
+            raise RuntimeError("Primero debes enviar la asistencia del turno.")
+        ruta, nombre_archivo = build_asistencia_excel(conn, fecha, turno)
+    subject = f"Asistencia turno {turno} - {fecha}"
+    body = (
+        f"Estimados,\n\n"
+        f"Se adjunta asistencia del turno {turno} correspondiente al {fecha}.\n"
+        f"Supervisor: {supervisor or 'No informado'}.\n\n"
+        f"Saludos,\nReportabilidad Soldesp"
+    )
+    send_excel_email("asistencia", subject, body, ruta, nombre_archivo)
+
+
 def _hoja_asistencia(conn, wb, fecha, turno):
     ws = wb.create_sheet("Asistencia")
     rows = []
@@ -1028,23 +1064,7 @@ def enviar_asistencia_email():
             params.update({"fecha": fecha, "supervisor": supervisor})
         return url_for(endpoint, **params)
     try:
-        with db() as conn:
-            enviados = scalar(
-                conn,
-                "SELECT COUNT(*) FROM asistencia WHERE fecha = ? AND turno = ? AND enviado_en IS NOT NULL",
-                (fecha, turno),
-            )
-            if not enviados:
-                raise RuntimeError("Primero debes enviar la asistencia del turno.")
-            ruta, nombre_archivo = build_asistencia_excel(conn, fecha, turno)
-        subject = f"Asistencia turno {turno} - {fecha}"
-        body = (
-            f"Estimados,\n\n"
-            f"Se adjunta asistencia del turno {turno} correspondiente al {fecha}.\n"
-            f"Supervisor: {supervisor or 'No informado'}.\n\n"
-            f"Saludos,\nReportabilidad Soldesp"
-        )
-        send_excel_email("asistencia", subject, body, ruta, nombre_archivo)
+        send_asistencia_turno(fecha, turno, supervisor)
         return redirect(done_url("msg", "Asistencia enviada por correo correctamente."))
     except Exception as exc:
         return redirect(done_url("error", f"No se pudo enviar asistencia: {exc}"))

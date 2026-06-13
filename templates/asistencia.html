@@ -8,12 +8,6 @@
   <div class="head-actions">
     {% if ultima_asistencia %}
     <a class="ghost-btn" href="{{ url_for('exportar_asistencia', fecha=ultima_asistencia.fecha, turno=ultima_asistencia.turno) }}">Descargar asistencia</a>
-    <form method="post" action="{{ url_for('enviar_asistencia_email') }}" class="head-action-form">
-      <input type="hidden" name="fecha" value="{{ ultima_asistencia.fecha }}">
-      <input type="hidden" name="turno" value="{{ ultima_asistencia.turno }}">
-      <input type="hidden" name="supervisor" value="{{ ultima_asistencia.supervisor or '' }}">
-      <button class="ghost-btn primary-action" type="submit">Enviar asistencia por correo</button>
-    </form>
     {% endif %}
     <a class="ghost-btn" href="{{ url_for('frentes') }}">Ir a actividades</a>
   </div>
