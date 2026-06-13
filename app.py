@@ -4,6 +4,7 @@ import sqlite3
 import json
 import os
 import smtplib
+import threading
 from datetime import date, datetime, timedelta
 from email.message import EmailMessage
 from pathlib import Path
@@ -973,6 +974,18 @@ def send_asistencia_turno(fecha: str, turno: str, supervisor: str):
     return send_excel_email("asistencia", subject, body, ruta, nombre_archivo)
 
 
+def run_background_task(label: str, func, *args):
+    def worker():
+        try:
+            func(*args)
+            app.logger.info("%s completed", label)
+        except Exception:
+            app.logger.exception("%s failed", label)
+
+    thread = threading.Thread(target=worker, daemon=True)
+    thread.start()
+
+
 def _hoja_asistencia(conn, wb, fecha, turno):
     ws = wb.create_sheet("Asistencia")
     rows = []
@@ -1123,11 +1136,8 @@ def enviar_asistencia_email():
         if endpoint == "frentes":
             params.update({"fecha": fecha, "supervisor": supervisor})
         return url_for(endpoint, **params)
-    try:
-        send_asistencia_turno(fecha, turno, supervisor)
-        return redirect(done_url("msg", "Asistencia enviada por correo correctamente."))
-    except Exception as exc:
-        return redirect(done_url("error", "No se pudo enviar asistencia: " + flash_text(exc)))
+    run_background_task("attendance email", send_asistencia_turno, fecha, turno, supervisor)
+    return redirect(done_url("msg", "Envio de asistencia iniciado en segundo plano. Revisa el correo en unos minutos."))
 
 
 @app.route("/enviar_reporte_email", methods=["POST"])
@@ -1151,8 +1161,8 @@ def enviar_reporte_email():
             f"Se adjunta informe de actividades del turno {turno} correspondiente al {fecha}.\n\n"
             f"Saludos,\nReportabilidad Soldesp"
         )
-        send_excel_email("reporte", subject, body, ruta, nombre_archivo)
-        return redirect(url_for("cierre", fecha=fecha, turno=turno, msg="Informe enviado por correo correctamente."))
+        run_background_task("report email", send_excel_email, "reporte", subject, body, ruta, nombre_archivo)
+        return redirect(url_for("cierre", fecha=fecha, turno=turno, msg="Envio de informe iniciado en segundo plano. Revisa el correo en unos minutos."))
     except Exception as exc:
         return redirect(url_for("cierre", fecha=fecha, turno=turno, error="No se pudo enviar informe: " + flash_text(exc)))
 
