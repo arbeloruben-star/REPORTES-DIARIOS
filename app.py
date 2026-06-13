@@ -602,24 +602,13 @@ def asistencia():
             conn.executemany("INSERT OR IGNORE INTO trabajadores(nombre) VALUES (?)", [(x,) for x in manuales])
             if accion == "enviar":
                 conn.commit()
-                try:
-                    recipients = send_asistencia_turno(fecha, turno, supervisor)
-                    destino = ", ".join(recipients)
-                    return redirect(url_for(
-                        "frentes",
-                        fecha=fecha,
-                        turno=turno,
-                        supervisor=supervisor,
-                        msg=f"Asistencia enviada y correo despachado a {destino}.",
-                    ))
-                except Exception as exc:
-                    return redirect(url_for(
-                        "frentes",
-                        fecha=fecha,
-                        turno=turno,
-                        supervisor=supervisor,
-                        error="Asistencia guardada, pero no se pudo enviar el correo: " + flash_text(exc),
-                    ))
+                return redirect(url_for(
+                    "frentes",
+                    fecha=fecha,
+                    turno=turno,
+                    supervisor=supervisor,
+                    msg="Asistencia enviada y actividades habilitadas. El correo se enviara desde el boton de asistencia.",
+                ))
             return redirect(url_for("asistencia"))
         rows = conn.execute("SELECT * FROM asistencia ORDER BY fecha DESC, turno, supervisor, enviado_en DESC, trabajador").fetchall()
         ultima_asistencia = conn.execute(
