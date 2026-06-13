@@ -30,7 +30,7 @@
     </a>
 
     <a class="flow-card {% if flujo.asistencia_enviada %}ready{% else %}blocked{% endif %}"
-       href="{% if flujo.asistencia_enviada %}{{ url_for('frentes', fecha=flujo.contexto.fecha, turno=flujo.contexto.turno, supervisor=flujo.contexto.supervisor) }}{% else %}{{ url_for('asistencia') }}{% endif %}">
+       href="{% if flujo.asistencia_enviada %}{{ url_for('frentes', fecha=flujo.contexto.fecha, turno=flujo.contexto.turno, supervisor=flujo.contexto.supervisor) }}{% else %}{{ url_for('asistencia', error=asistencia_required_msg) }}{% endif %}">
       <span class="flow-step">2</span>
       <div>
         <strong>Registro de actividades</strong>
@@ -44,7 +44,7 @@
     </a>
 
     <a class="flow-card {% if flujo.actividades and flujo.validaciones.total %}review{% elif flujo.actividades %}ready{% else %}blocked{% endif %}"
-       href="{{ url_for('dashboard', fecha=flujo.contexto.fecha, turno=flujo.contexto.turno) }}">
+       href="{% if flujo.asistencia_enviada %}{{ url_for('dashboard', fecha=flujo.contexto.fecha, turno=flujo.contexto.turno) }}{% else %}{{ url_for('asistencia', error=asistencia_required_msg) }}{% endif %}">
       <span class="flow-step">3</span>
       <div>
         <strong>Resumen diario</strong>
@@ -60,7 +60,7 @@
     </a>
 
     <a class="flow-card export {% if flujo.actividades and not flujo.validaciones.total %}ready{% elif flujo.actividades %}review{% else %}blocked{% endif %}"
-       href="{{ url_for('exportar', fecha=flujo.contexto.fecha, turno=flujo.contexto.turno) }}">
+       href="{% if flujo.asistencia_enviada %}{{ url_for('exportar', fecha=flujo.contexto.fecha, turno=flujo.contexto.turno) }}{% else %}{{ url_for('asistencia', error=asistencia_required_msg) }}{% endif %}">
       <span class="flow-step">4</span>
       <div>
         <strong>Exportar Excel</strong>

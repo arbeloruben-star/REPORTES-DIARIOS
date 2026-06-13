@@ -82,6 +82,9 @@ body {
 .topbar nav a:hover {
   background: var(--brand-orange);
 }
+.topbar nav a.locked {
+  opacity: .55;
+}
 .home-page .topbar nav {
   display: none;
 }

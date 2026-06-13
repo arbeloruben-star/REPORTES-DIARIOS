@@ -18,9 +18,15 @@
     </a>
     <nav>
       <a href="{{ url_for('asistencia') }}">Asistencia</a>
-      <a href="{{ url_for('frentes') }}">Actividades</a>
-      <a href="{{ url_for('dashboard') }}">Resumen</a>
-      <a href="{{ url_for('exportar') }}">Excel</a>
+      {% if nav_ready %}
+      <a href="{{ url_for('frentes', fecha=nav_ctx.fecha, turno=nav_ctx.turno, supervisor=nav_ctx.supervisor) }}">Actividades</a>
+      <a href="{{ url_for('dashboard', fecha=nav_ctx.fecha, turno=nav_ctx.turno) }}">Resumen</a>
+      <a href="{{ url_for('exportar', fecha=nav_ctx.fecha, turno=nav_ctx.turno) }}">Excel</a>
+      {% else %}
+      <a class="locked" href="{{ url_for('asistencia', error=asistencia_required_msg) }}">Actividades</a>
+      <a class="locked" href="{{ url_for('asistencia', error=asistencia_required_msg) }}">Resumen</a>
+      <a class="locked" href="{{ url_for('asistencia', error=asistencia_required_msg) }}">Excel</a>
+      {% endif %}
     </nav>
   </header>
   <main class="page">

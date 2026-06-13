@@ -101,6 +101,8 @@ CAUSALES = [
 app = Flask(__name__)
 app.config["SECRET_KEY"] = "reportabilidad-local"
 
+ASISTENCIA_REQUIRED_MSG = "Debe enviar asistencia para continuar"
+
 
 def db() -> sqlite3.Connection:
     conn = sqlite3.connect(DB_PATH)
@@ -111,6 +113,46 @@ def db() -> sqlite3.Connection:
 def scalar(conn: sqlite3.Connection, query: str, params: tuple = ()) -> float:
     row = conn.execute(query, params).fetchone()
     return row[0] or 0 if row else 0
+
+
+def latest_sent_attendance(conn: sqlite3.Connection):
+    return conn.execute(
+        """SELECT fecha, turno, supervisor
+           FROM asistencia
+           WHERE estado = 'Presente' AND enviado_en IS NOT NULL
+           ORDER BY enviado_en DESC, id DESC
+           LIMIT 1"""
+    ).fetchone()
+
+
+def asistencia_sent_count(conn: sqlite3.Connection, fecha: str, turno: str, supervisor: str = "") -> int:
+    params = [fecha, turno]
+    supervisor_filter = ""
+    if supervisor:
+        supervisor_filter = "AND supervisor = ?"
+        params.append(supervisor)
+    return int(scalar(
+        conn,
+        f"""SELECT COUNT(*) FROM asistencia
+            WHERE fecha = ? AND turno = ? AND estado = 'Presente'
+            AND enviado_en IS NOT NULL {supervisor_filter}""",
+        tuple(params),
+    ))
+
+
+def requested_or_latest_context(conn: sqlite3.Connection) -> dict:
+    latest = latest_sent_attendance(conn)
+    fecha = request.values.get("fecha") or (latest["fecha"] if latest else date.today().isoformat())
+    turno = request.values.get("turno") or (latest["turno"] if latest else "Dia")
+    supervisor = request.values.get("supervisor") or (latest["supervisor"] if latest else "")
+    return {"fecha": fecha, "turno": turno, "supervisor": supervisor}
+
+
+def require_asistencia_redirect(conn: sqlite3.Connection, endpoint: str = "asistencia"):
+    ctx = requested_or_latest_context(conn)
+    if asistencia_sent_count(conn, ctx["fecha"], ctx["turno"], ctx["supervisor"]):
+        return None
+    return redirect(url_for(endpoint, turno=ctx["turno"], error=ASISTENCIA_REQUIRED_MSG))
 
 
 def parse_hours(start: str, end: str) -> float:
@@ -437,7 +479,14 @@ def update_frente(conn, frente_id: int, form):
 
 @app.context_processor
 def inject_today():
-    return {"today": date.today().isoformat()}
+    try:
+        with db() as conn:
+            ctx = requested_or_latest_context(conn)
+            nav_ready = asistencia_sent_count(conn, ctx["fecha"], ctx["turno"], ctx["supervisor"]) > 0
+    except Exception:
+        ctx = {"fecha": date.today().isoformat(), "turno": "Dia", "supervisor": ""}
+        nav_ready = False
+    return {"today": date.today().isoformat(), "nav_ctx": ctx, "nav_ready": nav_ready, "asistencia_required_msg": ASISTENCIA_REQUIRED_MSG}
 
 
 @app.route("/service-worker.js")
@@ -608,6 +657,9 @@ def cuadrillas():
 @app.route("/frentes", methods=["GET", "POST"])
 def frentes():
     with db() as conn:
+        gate = require_asistencia_redirect(conn)
+        if gate:
+            return gate
         if request.method == "POST":
             frente_id = int(request.form.get("frente_id") or 0) or None
             data = frente_form_data(conn, request.form)
@@ -716,6 +768,9 @@ def dashboard():
     fecha = request.args.get("fecha", date.today().isoformat())
     turno = request.args.get("turno", "Dia")
     with db() as conn:
+        gate = require_asistencia_redirect(conn)
+        if gate:
+            return gate
         asistentes = conn.execute(
             "SELECT trabajador, cargo FROM asistencia WHERE fecha = ? AND turno = ? AND estado = 'Presente' AND enviado_en IS NOT NULL ORDER BY CASE WHEN cargo = 'Supervisor' THEN 0 ELSE 1 END, trabajador",
             (fecha, turno),
@@ -728,6 +783,9 @@ def cierre():
     fecha = request.args.get("fecha", date.today().isoformat())
     turno = request.args.get("turno", "Dia")
     with db() as conn:
+        gate = require_asistencia_redirect(conn)
+        if gate:
+            return gate
         rows = conn.execute("SELECT * FROM frentes WHERE fecha = ? AND turno = ? ORDER BY hora_inicio, id", (fecha, turno)).fetchall()
         validaciones = validaciones_turno(conn, fecha, turno)
         return render_template("cierre.html", rows=rows, data=dashboard_data(conn, fecha, turno), validaciones=validaciones, fecha=fecha, turno=turno, opts=get_options(conn), error=request.args.get("error"), msg=request.args.get("msg"))
@@ -1030,6 +1088,9 @@ def exportar():
     fecha = request.args.get("fecha", date.today().isoformat())
     turno = request.args.get("turno", "Dia")
     with db() as conn:
+        gate = require_asistencia_redirect(conn)
+        if gate:
+            return gate
         validaciones = validaciones_turno(conn, fecha, turno)
         if validaciones["excedidos"]:
             return redirect(url_for(
@@ -1076,6 +1137,9 @@ def enviar_reporte_email():
     turno = request.form.get("turno") or "Dia"
     try:
         with db() as conn:
+            gate = require_asistencia_redirect(conn)
+            if gate:
+                return gate
             validaciones = validaciones_turno(conn, fecha, turno)
             if validaciones["excedidos"]:
                 raise RuntimeError("Hay personas sobre 11 HH. Edita los registros antes de enviar.")

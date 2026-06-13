@@ -9,7 +9,7 @@
     <form method="post" action="{{ url_for('enviar_reporte_email') }}" class="head-action-form">
       <input type="hidden" name="fecha" value="{{ fecha }}">
       <input type="hidden" name="turno" value="{{ turno }}">
-      <button class="ghost-btn primary-action" type="submit">Enviar informe por correo</button>
+      <button class="ghost-btn primary-action" type="submit">Terminar informe y enviar por correo</button>
     </form>
     <a class="ghost-btn" href="{{ url_for('exportar', fecha=fecha, turno=turno) }}">Descargar informe Excel</a>
   </div>
