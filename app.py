@@ -595,6 +595,7 @@ def asistencia():
                 )
             conn.executemany("INSERT OR IGNORE INTO trabajadores(nombre) VALUES (?)", [(x,) for x in manuales])
             if accion == "enviar":
+                conn.commit()
                 try:
                     send_asistencia_turno(fecha, turno, supervisor)
                     return redirect(url_for(
