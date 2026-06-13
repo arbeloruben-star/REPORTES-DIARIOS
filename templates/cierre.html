@@ -5,8 +5,16 @@
     <h1>Cierre y envio de informe</h1>
     <p>Revision interna antes de descargar el Excel final</p>
   </div>
-  <a class="ghost-btn primary-action" href="{{ url_for('exportar', fecha=fecha, turno=turno) }}">Descargar informe Excel</a>
+  <div class="head-actions">
+    <form method="post" action="{{ url_for('enviar_reporte_email') }}" class="head-action-form">
+      <input type="hidden" name="fecha" value="{{ fecha }}">
+      <input type="hidden" name="turno" value="{{ turno }}">
+      <button class="ghost-btn primary-action" type="submit">Enviar informe por correo</button>
+    </form>
+    <a class="ghost-btn" href="{{ url_for('exportar', fecha=fecha, turno=turno) }}">Descargar informe Excel</a>
+  </div>
 </section>
+{% if msg %}<div class="success">{{ msg }}</div>{% endif %}
 {% if error %}<div class="alert">{{ error }}</div>{% endif %}
 <form class="filters" method="get">
   <input type="date" name="fecha" value="{{ fecha }}">

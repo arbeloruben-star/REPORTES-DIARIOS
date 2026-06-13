@@ -224,6 +224,12 @@ h2 { font-size: 18px; }
   justify-content: flex-end;
   gap: 8px;
 }
+.head-action-form {
+  margin: 0;
+}
+.head-action-form button {
+  cursor: pointer;
+}
 .ghost-btn, .filters button {
   border: 1px solid var(--line);
   background: #fff;
@@ -596,6 +602,15 @@ textarea { resize: vertical; }
   border-radius: 8px;
   padding: 10px 12px;
   margin-bottom: 10px;
+}
+.success {
+  background: #edf8f3;
+  border: 1px solid #b7e3ce;
+  color: var(--green);
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin-bottom: 10px;
+  font-weight: 700;
 }
 .inline-action {
   margin-top: 10px;

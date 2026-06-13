@@ -37,6 +37,23 @@ Archivos incluidos:
 Para Render, el `render.yaml` usa un disco persistente en `/var/data` y guarda SQLite en `DATABASE_PATH=/var/data/reportabilidad.db`.
 En otros proveedores se puede usar `gunicorn app:app` y configurar `DATABASE_PATH` hacia una carpeta persistente.
 
+## Envio de correos
+
+La app puede enviar la asistencia inicial y el informe final por correo usando una casilla Microsoft 365 / Outlook configurada en variables de entorno.
+No guardar usuarios ni contrasenas dentro del codigo.
+
+Variables principales en Render:
+
+- `SMTP_HOST`: `smtp.office365.com`
+- `SMTP_PORT`: `587`
+- `SMTP_USER`: correo emisor
+- `SMTP_PASSWORD`: clave o clave de aplicacion del correo emisor
+- `SMTP_FROM`: correo emisor, normalmente igual a `SMTP_USER`
+- `MAIL_FROM_NAME`: nombre visible del remitente
+- `ASSISTANCE_MAIL_TO`: destinatarios de asistencia, separados por coma o punto y coma
+- `REPORT_MAIL_TO`: destinatarios del informe final
+- `MAIL_CC`: copias comunes opcionales
+
 ## Reglas HH implementadas
 
 - Ejecutado: HH directas.

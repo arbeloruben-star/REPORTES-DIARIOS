@@ -5,9 +5,21 @@
     <h1>Registro de actividades</h1>
     <p>Formulario rapido para terreno</p>
   </div>
-  <a class="ghost-btn primary-action" href="{{ url_for('cierre', fecha=fecha, turno=turno) }}">Cierre y envio de informe</a>
+  <div class="head-actions">
+    {% if present_count_turno %}
+    <form method="post" action="{{ url_for('enviar_asistencia_email') }}" class="head-action-form">
+      <input type="hidden" name="fecha" value="{{ fecha }}">
+      <input type="hidden" name="turno" value="{{ turno }}">
+      <input type="hidden" name="supervisor" value="{{ supervisor }}">
+      <input type="hidden" name="next" value="frentes">
+      <button class="ghost-btn" type="submit">Enviar asistencia por correo</button>
+    </form>
+    {% endif %}
+    <a class="ghost-btn primary-action" href="{{ url_for('cierre', fecha=fecha, turno=turno) }}">Cierre y envio de informe</a>
+  </div>
 </section>
 
+{% if msg %}<div class="success">{{ msg }}</div>{% endif %}
 {% if error %}<div class="alert">{{ error }}</div>{% endif %}
 {% if not present_count_turno %}
 {% if pending_count_turno %}

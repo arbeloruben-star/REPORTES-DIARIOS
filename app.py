@@ -3,7 +3,9 @@ from __future__ import annotations
 import sqlite3
 import json
 import os
+import smtplib
 from datetime import date, datetime, timedelta
+from email.message import EmailMessage
 from pathlib import Path
 
 from flask import Flask, redirect, render_template, request, send_file, url_for, make_response
@@ -557,7 +559,8 @@ def asistencia():
         turno_sel = request.args.get("turno", "Dia")
         hora_ing = "07:15" if turno_sel == "Dia" else "19:15"
         hora_sal = "19:15" if turno_sel == "Dia" else "07:15"
-        return render_template("asistencia.html", rows=rows, opts=get_options(conn), turno_sel=turno_sel, hora_ing=hora_ing, hora_sal=hora_sal, ultima_asistencia=ultima_asistencia)
+        return render_template("asistencia.html", rows=rows, opts=get_options(conn), turno_sel=turno_sel, hora_ing=hora_ing, hora_sal=hora_sal, ultima_asistencia=ultima_asistencia,
+                               error=request.args.get("error"), msg=request.args.get("msg"))
 
 
 @app.route("/enviar_asistencia_pendiente", methods=["POST"])
@@ -641,7 +644,7 @@ def frentes():
             pending_count_turno = scalar(conn, "SELECT COUNT(*) FROM asistencia WHERE fecha = ? AND turno = ? AND estado = 'Presente' AND enviado_en IS NULL", (fecha, turno))
         return render_template("frentes.html", rows=rows, last=last, edit=edit, edit_asignados=edit_asignados, opts=get_options(conn, fecha, turno, supervisor),
                                fecha=fecha, turno=turno, supervisor=supervisor,
-                               error=request.args.get("error"),
+                               error=request.args.get("error"), msg=request.args.get("msg"),
                                hh_personas=hh_asignadas_por_persona(conn, fecha, turno, exclude_id=edit_id if edit else None),
                                present_count_turno=present_count_turno, pending_count_turno=pending_count_turno)
 
@@ -711,7 +714,7 @@ def cierre():
     with db() as conn:
         rows = conn.execute("SELECT * FROM frentes WHERE fecha = ? AND turno = ? ORDER BY hora_inicio, id", (fecha, turno)).fetchall()
         validaciones = validaciones_turno(conn, fecha, turno)
-        return render_template("cierre.html", rows=rows, data=dashboard_data(conn, fecha, turno), validaciones=validaciones, fecha=fecha, turno=turno, opts=get_options(conn), error=request.args.get("error"))
+        return render_template("cierre.html", rows=rows, data=dashboard_data(conn, fecha, turno), validaciones=validaciones, fecha=fecha, turno=turno, opts=get_options(conn), error=request.args.get("error"), msg=request.args.get("msg"))
 
 
 def hh_asignadas_por_persona(conn, fecha: str, turno: str, exclude_id: int | None = None) -> dict[str, float]:
@@ -819,6 +822,64 @@ def _brand_existing_header(ws, title: str, merge_to: str):
     ws.merge_cells(f"C1:{merge_to}1")
 
 
+def parse_mail_list(value: str | None) -> list[str]:
+    if not value:
+        return []
+    normalized = value.replace(";", ",").replace("\n", ",")
+    return [item.strip() for item in normalized.split(",") if item.strip()]
+
+
+def mail_recipients(kind: str) -> tuple[list[str], list[str], list[str]]:
+    prefix = "ASSISTANCE" if kind == "asistencia" else "REPORT"
+    to = parse_mail_list(os.environ.get(f"{prefix}_MAIL_TO") or os.environ.get("MAIL_TO"))
+    cc = parse_mail_list(os.environ.get(f"{prefix}_MAIL_CC") or os.environ.get("MAIL_CC"))
+    bcc = parse_mail_list(os.environ.get(f"{prefix}_MAIL_BCC") or os.environ.get("MAIL_BCC"))
+    return to, cc, bcc
+
+
+def send_excel_email(kind: str, subject: str, body: str, attachment_path: Path, attachment_name: str):
+    host = os.environ.get("SMTP_HOST", "smtp.office365.com")
+    port = int(os.environ.get("SMTP_PORT", "587"))
+    username = os.environ.get("SMTP_USER")
+    password = os.environ.get("SMTP_PASSWORD")
+    sender = os.environ.get("SMTP_FROM") or username
+    sender_name = os.environ.get("MAIL_FROM_NAME", "Reportabilidad Soldesp")
+    to, cc, bcc = mail_recipients(kind)
+
+    missing = []
+    if not username:
+        missing.append("SMTP_USER")
+    if not password:
+        missing.append("SMTP_PASSWORD")
+    if not sender:
+        missing.append("SMTP_FROM o SMTP_USER")
+    if not to:
+        missing.append(f"{'ASSISTANCE' if kind == 'asistencia' else 'REPORT'}_MAIL_TO o MAIL_TO")
+    if missing:
+        raise RuntimeError("Falta configurar correo en Render: " + ", ".join(missing))
+
+    msg = EmailMessage()
+    msg["Subject"] = subject
+    msg["From"] = f"{sender_name} <{sender}>"
+    msg["To"] = ", ".join(to)
+    if cc:
+        msg["Cc"] = ", ".join(cc)
+    msg.set_content(body)
+    with open(attachment_path, "rb") as fh:
+        msg.add_attachment(
+            fh.read(),
+            maintype="application",
+            subtype="vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            filename=attachment_name,
+        )
+
+    recipients = to + cc + bcc
+    with smtplib.SMTP(host, port, timeout=30) as smtp:
+        smtp.starttls()
+        smtp.login(username, password)
+        smtp.send_message(msg, from_addr=sender, to_addrs=recipients)
+
+
 def _hoja_asistencia(conn, wb, fecha, turno):
     ws = wb.create_sheet("Asistencia")
     rows = []
@@ -906,6 +967,28 @@ def _hoja_resumen_hh(conn, wb, fecha, turno):
     _brand_existing_header(ws, f"RESUMEN HH POR PERSONA  -  {turno.upper()}  -  {fecha}", "E")
 
 
+def build_reporte_excel(conn, fecha: str, turno: str) -> tuple[Path, str]:
+    wb = Workbook()
+    wb.remove(wb.active)
+    _hoja_asistencia(conn, wb, fecha, turno)
+    _hoja_actividades(conn, wb, fecha, turno)
+    _hoja_resumen_hh(conn, wb, fecha, turno)
+    nombre_archivo = f"reporte_soldesp_komatsu_{fecha}_{turno.lower()}.xlsx"
+    ruta = APP_DIR / nombre_archivo
+    wb.save(ruta)
+    return ruta, nombre_archivo
+
+
+def build_asistencia_excel(conn, fecha: str, turno: str) -> tuple[Path, str]:
+    wb = Workbook()
+    wb.remove(wb.active)
+    _hoja_asistencia(conn, wb, fecha, turno)
+    nombre_archivo = f"asistencia_soldesp_{fecha}_{turno.lower()}.xlsx"
+    ruta = APP_DIR / nombre_archivo
+    wb.save(ruta)
+    return ruta, nombre_archivo
+
+
 @app.route("/exportar")
 def exportar():
     fecha = request.args.get("fecha", date.today().isoformat())
@@ -919,14 +1002,7 @@ def exportar():
                 turno=turno,
                 error="No se puede descargar el informe: hay personas sobre 11 HH. Edita los registros antes de cerrar.",
             ))
-        wb = Workbook()
-        wb.remove(wb.active)
-        _hoja_asistencia(conn, wb, fecha, turno)
-        _hoja_actividades(conn, wb, fecha, turno)
-        _hoja_resumen_hh(conn, wb, fecha, turno)
-        nombre_archivo = f"reporte_soldesp_komatsu_{fecha}_{turno.lower()}.xlsx"
-        ruta = APP_DIR / nombre_archivo
-        wb.save(ruta)
+        ruta, nombre_archivo = build_reporte_excel(conn, fecha, turno)
     return send_file(ruta, as_attachment=True, download_name=nombre_archivo)
 
 
@@ -935,13 +1011,67 @@ def exportar_asistencia():
     fecha = request.args.get("fecha", date.today().isoformat())
     turno = request.args.get("turno", "Dia")
     with db() as conn:
-        wb = Workbook()
-        wb.remove(wb.active)
-        _hoja_asistencia(conn, wb, fecha, turno)
-        nombre_archivo = f"asistencia_soldesp_{fecha}_{turno.lower()}.xlsx"
-        ruta = APP_DIR / nombre_archivo
-        wb.save(ruta)
+        ruta, nombre_archivo = build_asistencia_excel(conn, fecha, turno)
     return send_file(ruta, as_attachment=True, download_name=nombre_archivo)
+
+
+@app.route("/enviar_asistencia_email", methods=["POST"])
+def enviar_asistencia_email():
+    fecha = request.form.get("fecha") or date.today().isoformat()
+    turno = request.form.get("turno") or "Dia"
+    supervisor = request.form.get("supervisor") or ""
+    next_page = request.form.get("next") or "asistencia"
+    def done_url(message_key: str, message: str):
+        endpoint = "frentes" if next_page == "frentes" else "asistencia"
+        params = {"turno": turno, message_key: message}
+        if endpoint == "frentes":
+            params.update({"fecha": fecha, "supervisor": supervisor})
+        return url_for(endpoint, **params)
+    try:
+        with db() as conn:
+            enviados = scalar(
+                conn,
+                "SELECT COUNT(*) FROM asistencia WHERE fecha = ? AND turno = ? AND enviado_en IS NOT NULL",
+                (fecha, turno),
+            )
+            if not enviados:
+                raise RuntimeError("Primero debes enviar la asistencia del turno.")
+            ruta, nombre_archivo = build_asistencia_excel(conn, fecha, turno)
+        subject = f"Asistencia turno {turno} - {fecha}"
+        body = (
+            f"Estimados,\n\n"
+            f"Se adjunta asistencia del turno {turno} correspondiente al {fecha}.\n"
+            f"Supervisor: {supervisor or 'No informado'}.\n\n"
+            f"Saludos,\nReportabilidad Soldesp"
+        )
+        send_excel_email("asistencia", subject, body, ruta, nombre_archivo)
+        return redirect(done_url("msg", "Asistencia enviada por correo correctamente."))
+    except Exception as exc:
+        return redirect(done_url("error", f"No se pudo enviar asistencia: {exc}"))
+
+
+@app.route("/enviar_reporte_email", methods=["POST"])
+def enviar_reporte_email():
+    fecha = request.form.get("fecha") or date.today().isoformat()
+    turno = request.form.get("turno") or "Dia"
+    try:
+        with db() as conn:
+            validaciones = validaciones_turno(conn, fecha, turno)
+            if validaciones["excedidos"]:
+                raise RuntimeError("Hay personas sobre 11 HH. Edita los registros antes de enviar.")
+            if validaciones["frentes_abiertos"]:
+                raise RuntimeError("Hay actividades en proceso. Cierra los registros antes de enviar.")
+            ruta, nombre_archivo = build_reporte_excel(conn, fecha, turno)
+        subject = f"Informe actividades turno {turno} - {fecha}"
+        body = (
+            f"Estimados,\n\n"
+            f"Se adjunta informe de actividades del turno {turno} correspondiente al {fecha}.\n\n"
+            f"Saludos,\nReportabilidad Soldesp"
+        )
+        send_excel_email("reporte", subject, body, ruta, nombre_archivo)
+        return redirect(url_for("cierre", fecha=fecha, turno=turno, msg="Informe enviado por correo correctamente."))
+    except Exception as exc:
+        return redirect(url_for("cierre", fecha=fecha, turno=turno, error=f"No se pudo enviar informe: {exc}"))
 
 
 @app.route("/limpiar_db", methods=["GET", "POST"])

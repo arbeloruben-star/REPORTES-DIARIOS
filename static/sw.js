@@ -1,4 +1,4 @@
-const CACHE_NAME = "soldesp-reportabilidad-v5";
+const CACHE_NAME = "soldesp-reportabilidad-v6";
 const SHELL_ASSETS = [
   "/",
   "/offline",
