@@ -115,6 +115,11 @@ def scalar(conn: sqlite3.Connection, query: str, params: tuple = ()) -> float:
     return row[0] or 0 if row else 0
 
 
+def flash_text(value, limit: int = 260) -> str:
+    text = " ".join(str(value).replace("\r", " ").replace("\n", " ").split())
+    return text[:limit]
+
+
 def latest_sent_attendance(conn: sqlite3.Connection):
     return conn.execute(
         """SELECT fecha, turno, supervisor
@@ -612,7 +617,7 @@ def asistencia():
                         fecha=fecha,
                         turno=turno,
                         supervisor=supervisor,
-                        error=f"Asistencia guardada, pero no se pudo enviar el correo: {exc}",
+                        error="Asistencia guardada, pero no se pudo enviar el correo: " + flash_text(exc),
                     ))
             return redirect(url_for("asistencia"))
         rows = conn.execute("SELECT * FROM asistencia ORDER BY fecha DESC, turno, supervisor, enviado_en DESC, trabajador").fetchall()
@@ -1131,7 +1136,7 @@ def enviar_asistencia_email():
         send_asistencia_turno(fecha, turno, supervisor)
         return redirect(done_url("msg", "Asistencia enviada por correo correctamente."))
     except Exception as exc:
-        return redirect(done_url("error", f"No se pudo enviar asistencia: {exc}"))
+        return redirect(done_url("error", "No se pudo enviar asistencia: " + flash_text(exc)))
 
 
 @app.route("/enviar_reporte_email", methods=["POST"])
@@ -1158,7 +1163,7 @@ def enviar_reporte_email():
         send_excel_email("reporte", subject, body, ruta, nombre_archivo)
         return redirect(url_for("cierre", fecha=fecha, turno=turno, msg="Informe enviado por correo correctamente."))
     except Exception as exc:
-        return redirect(url_for("cierre", fecha=fecha, turno=turno, error=f"No se pudo enviar informe: {exc}"))
+        return redirect(url_for("cierre", fecha=fecha, turno=turno, error="No se pudo enviar informe: " + flash_text(exc)))
 
 
 @app.route("/limpiar_db", methods=["GET", "POST"])
