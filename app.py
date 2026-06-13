@@ -12,6 +12,7 @@ from flask import Flask, redirect, render_template, request, send_file, url_for,
 from openpyxl import Workbook
 from openpyxl.drawing.image import Image as XLImage
 from openpyxl.styles import Font, PatternFill
+from werkzeug.exceptions import HTTPException
 
 
 APP_DIR = Path(__file__).resolve().parent
@@ -921,6 +922,7 @@ def mail_recipients(kind: str) -> tuple[list[str], list[str], list[str]]:
 def send_excel_email(kind: str, subject: str, body: str, attachment_path: Path, attachment_name: str):
     host = os.environ.get("SMTP_HOST", "smtp.office365.com")
     port = int(os.environ.get("SMTP_PORT", "587"))
+    timeout = int(os.environ.get("SMTP_TIMEOUT", "8"))
     username = os.environ.get("SMTP_USER")
     password = os.environ.get("SMTP_PASSWORD")
     sender = os.environ.get("SMTP_FROM") or username
@@ -955,7 +957,7 @@ def send_excel_email(kind: str, subject: str, body: str, attachment_path: Path, 
         )
 
     recipients = to + cc + bcc
-    with smtplib.SMTP(host, port, timeout=30) as smtp:
+    with smtplib.SMTP(host, port, timeout=timeout) as smtp:
         smtp.starttls()
         smtp.login(username, password)
         smtp.send_message(msg, from_addr=sender, to_addrs=recipients)
@@ -1186,6 +1188,14 @@ def limpiar_db():
     <p>Se eliminarán <strong>todas las asistencias, frentes y demanda</strong>.<br>Los catálogos se conservan.</p>
     <form method=post><button class="btn danger" type=submit>Confirmar — Borrar todo</button></form><br>
     <a class=ghost href="/">Cancelar</a></body></html>"""
+
+
+@app.errorhandler(Exception)
+def handle_unexpected_error(exc):
+    if isinstance(exc, HTTPException):
+        return exc
+    app.logger.exception("Unhandled application error")
+    return redirect(url_for("asistencia", error="Error interno controlado: " + flash_text(exc)))
 
 
 init_db()
