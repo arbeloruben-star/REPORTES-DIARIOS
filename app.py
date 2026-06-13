@@ -597,13 +597,14 @@ def asistencia():
             if accion == "enviar":
                 conn.commit()
                 try:
-                    send_asistencia_turno(fecha, turno, supervisor)
+                    recipients = send_asistencia_turno(fecha, turno, supervisor)
+                    destino = ", ".join(recipients)
                     return redirect(url_for(
                         "frentes",
                         fecha=fecha,
                         turno=turno,
                         supervisor=supervisor,
-                        msg="Asistencia enviada y correo despachado correctamente.",
+                        msg=f"Asistencia enviada y correo despachado a {destino}.",
                     ))
                 except Exception as exc:
                     return redirect(url_for(
@@ -953,6 +954,7 @@ def send_excel_email(kind: str, subject: str, body: str, attachment_path: Path, 
         smtp.starttls()
         smtp.login(username, password)
         smtp.send_message(msg, from_addr=sender, to_addrs=recipients)
+    return recipients
 
 
 def send_asistencia_turno(fecha: str, turno: str, supervisor: str):
@@ -972,7 +974,7 @@ def send_asistencia_turno(fecha: str, turno: str, supervisor: str):
         f"Supervisor: {supervisor or 'No informado'}.\n\n"
         f"Saludos,\nReportabilidad Soldesp"
     )
-    send_excel_email("asistencia", subject, body, ruta, nombre_archivo)
+    return send_excel_email("asistencia", subject, body, ruta, nombre_archivo)
 
 
 def _hoja_asistencia(conn, wb, fecha, turno):
