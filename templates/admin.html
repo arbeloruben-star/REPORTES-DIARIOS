@@ -1,0 +1,83 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="screen-head">
+  <div>
+    <h1>Panel de administración</h1>
+    <p>Gestión de usuarios del sistema</p>
+  </div>
+</section>
+
+{% if msg %}<div class="success">{{ msg }}</div>{% endif %}
+{% if error %}<div class="alert">{{ error }}</div>{% endif %}
+
+<section class="field-form">
+  <h2 style="font-size:1rem;margin-bottom:1rem;">Usuarios activos</h2>
+  <table style="width:100%;border-collapse:collapse;font-size:.9rem;">
+    <thead>
+      <tr style="background:var(--blue);color:#fff;">
+        <th style="padding:.6rem .8rem;text-align:left;">Usuario</th>
+        <th style="padding:.6rem .8rem;text-align:left;">Rol</th>
+        <th style="padding:.6rem .8rem;text-align:left;">Supervisor vinculado</th>
+        <th style="padding:.6rem .8rem;text-align:left;">Estado</th>
+        <th style="padding:.6rem .8rem;text-align:left;">Acciones</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for u in usuarios %}
+      <tr style="border-bottom:1px solid var(--line);">
+        <td style="padding:.6rem .8rem;">{{ u.username }}</td>
+        <td style="padding:.6rem .8rem;">{{ u.rol }}</td>
+        <td style="padding:.6rem .8rem;">{{ u.supervisor_nombre or '—' }}</td>
+        <td style="padding:.6rem .8rem;">{{ 'Activo' if u.activo else 'Inactivo' }}</td>
+        <td style="padding:.6rem .8rem;">
+          {% if u.username != current_user.username %}
+          <form method="post" action="{{ url_for('admin_toggle_user', uid=u.id) }}" style="display:inline;">
+            <button type="submit" style="font-size:.8rem;padding:.3rem .6rem;border:1px solid var(--line);border-radius:5px;cursor:pointer;background:var(--bg);">
+              {{ 'Desactivar' if u.activo else 'Activar' }}
+            </button>
+          </form>
+          <form method="post" action="{{ url_for('admin_reset_password', uid=u.id) }}" style="display:inline;">
+            <input type="hidden" name="nueva_password" value="Soldesp2026">
+            <button type="submit" style="font-size:.8rem;padding:.3rem .6rem;border:1px solid var(--line);border-radius:5px;cursor:pointer;background:var(--bg);">
+              Reset clave
+            </button>
+          </form>
+          {% else %}
+          <span style="color:var(--muted);font-size:.8rem;">Cuenta actual</span>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  <h2 style="font-size:1rem;margin:2rem 0 1rem;">Crear nuevo usuario</h2>
+  <form method="post" action="{{ url_for('admin_crear_usuario') }}" class="field-form" style="padding:0;">
+    <div class="grid two">
+      <label>Usuario
+        <input type="text" name="username" required placeholder="ej: golivares">
+      </label>
+      <label>Contraseña inicial
+        <input type="text" name="password" required placeholder="min 6 caracteres">
+      </label>
+    </div>
+    <div class="grid two">
+      <label>Rol
+        <select name="rol">
+          <option value="supervisor">Supervisor</option>
+          <option value="admin">Administrador</option>
+        </select>
+      </label>
+      <label>Supervisor vinculado
+        <select name="supervisor_nombre">
+          <option value="">— Sin vincular —</option>
+          {% for s in supervisores %}
+          <option value="{{ s }}">{{ s }}</option>
+          {% endfor %}
+        </select>
+      </label>
+    </div>
+    <button class="submit-btn" type="submit" style="margin-top:1rem;">Crear usuario</button>
+  </form>
+</section>
+{% endblock %}

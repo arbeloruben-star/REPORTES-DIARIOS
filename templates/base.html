@@ -27,6 +27,12 @@
       <a class="locked" href="{{ url_for('asistencia', error=asistencia_required_msg) }}">Resumen</a>
       <a class="locked" href="{{ url_for('asistencia', error=asistencia_required_msg) }}">Excel</a>
       {% endif %}
+      {% if current_user.is_authenticated and current_user.rol == 'admin' %}
+      <a href="{{ url_for('admin_panel') }}">Admin</a>
+      {% endif %}
+      {% if current_user.is_authenticated %}
+      <a href="{{ url_for('logout') }}" style="color:var(--muted);font-size:.85rem;">{{ current_user.username }} ✕</a>
+      {% endif %}
     </nav>
   </header>
   <main class="page">

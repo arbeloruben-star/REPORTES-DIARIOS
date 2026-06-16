@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Login — Reportabilidad Soldesp</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+  <style>
+    body { display:flex; align-items:center; justify-content:center; min-height:100vh; background:var(--bg); }
+    .login-box { background:var(--panel); border-radius:12px; padding:2.5rem 2rem; width:100%; max-width:380px; box-shadow:0 4px 24px rgba(0,0,0,.10); }
+    .login-box img { width:120px; display:block; margin:0 auto 1.5rem; }
+    .login-box h1 { text-align:center; font-size:1.2rem; color:var(--ink); margin-bottom:1.5rem; }
+    .login-box label { display:block; font-size:.85rem; color:var(--muted); margin-bottom:.25rem; margin-top:1rem; }
+    .login-box input { width:100%; padding:.65rem .85rem; border:1.5px solid var(--line); border-radius:7px; font-size:1rem; background:var(--bg); color:var(--ink); box-sizing:border-box; }
+    .login-box input:focus { outline:none; border-color:var(--blue); }
+    .login-btn { width:100%; margin-top:1.5rem; padding:.75rem; background:var(--blue); color:#fff; border:none; border-radius:8px; font-size:1rem; font-weight:600; cursor:pointer; }
+    .login-btn:hover { opacity:.9; }
+    .alert { background:#fdecea; color:#b42318; border-radius:7px; padding:.65rem .85rem; font-size:.9rem; margin-top:1rem; }
+  </style>
+</head>
+<body>
+  <div class="login-box">
+    <img src="{{ url_for('static', filename='soldesp-logo.jpg') }}" alt="Soldesp">
+    <h1>Reportabilidad diaria</h1>
+    {% if error %}<div class="alert">{{ error }}</div>{% endif %}
+    <form method="post">
+      <label>Usuario</label>
+      <input type="text" name="username" autocomplete="username" required autofocus>
+      <label>Contraseña</label>
+      <input type="password" name="password" autocomplete="current-password" required>
+      <button class="login-btn" type="submit">Ingresar</button>
+    </form>
+  </div>
+</body>
+</html>

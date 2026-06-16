@@ -8,7 +8,9 @@ import threading
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
-from flask import Flask, redirect, render_template, request, send_file, url_for, make_response
+from flask import Flask, redirect, render_template, request, send_file, url_for, make_response, session
+from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
+import bcrypt
 from openpyxl import Workbook
 from openpyxl.drawing.image import Image as XLImage
 from openpyxl.styles import Font, PatternFill
@@ -100,9 +102,46 @@ CAUSALES = [
 ]
 
 app = Flask(__name__)
-app.config["SECRET_KEY"] = "reportabilidad-local"
+app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", "reportabilidad-local-dev")
+
+login_manager = LoginManager()
+login_manager.init_app(app)
+login_manager.login_view = "login_page"
+login_manager.login_message = "Debes iniciar sesion para acceder."
 
 ASISTENCIA_REQUIRED_MSG = "Debe enviar asistencia para continuar"
+ADMIN_REQUIRED_MSG = "Acceso restringido a administradores."
+
+
+class Usuario(UserMixin):
+    def __init__(self, id, username, rol, supervisor_nombre, activo):
+        self.id = id
+        self.username = username
+        self.rol = rol
+        self.supervisor_nombre = supervisor_nombre
+        self.activo = activo
+
+    def is_active(self):
+        return bool(self.activo)
+
+
+@login_manager.user_loader
+def load_user(user_id):
+    with db() as conn:
+        row = conn.execute("SELECT * FROM usuarios WHERE id = ?", (int(user_id),)).fetchone()
+        if row and row["activo"]:
+            return Usuario(row["id"], row["username"], row["rol"], row["supervisor_nombre"], row["activo"])
+    return None
+
+
+def admin_required(f):
+    from functools import wraps
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        if not current_user.is_authenticated or current_user.rol != "admin":
+            return redirect(url_for("index", error=ADMIN_REQUIRED_MSG))
+        return f(*args, **kwargs)
+    return decorated
 
 
 def db() -> sqlite3.Connection:
@@ -148,9 +187,13 @@ def asistencia_sent_count(conn: sqlite3.Connection, fecha: str, turno: str, supe
 
 def requested_or_latest_context(conn: sqlite3.Connection) -> dict:
     latest = latest_sent_attendance(conn)
+    # Si es supervisor, forzar su propio contexto
+    if current_user.is_authenticated and current_user.rol == "supervisor" and current_user.supervisor_nombre:
+        supervisor = current_user.supervisor_nombre
+    else:
+        supervisor = request.values.get("supervisor") or (latest["supervisor"] if latest else "")
     fecha = request.values.get("fecha") or (latest["fecha"] if latest else date.today().isoformat())
     turno = request.values.get("turno") or (latest["turno"] if latest else "Dia")
-    supervisor = request.values.get("supervisor") or (latest["supervisor"] if latest else "")
     return {"fecha": fecha, "turno": turno, "supervisor": supervisor}
 
 
@@ -193,7 +236,6 @@ def classify_hh(estado: str, causal: str, hh_total: float, hh_directa_in: float 
     causal_code = (causal or "")[:3]
     directas = indirectas = no_utilizadas = 0.0
     advertencia = ""
-
     if estado in {"Ejecutado", "En proceso"}:
         directas = hh_total
     elif estado == "Parcial":
@@ -214,13 +256,11 @@ def classify_hh(estado: str, causal: str, hh_total: float, hh_directa_in: float 
             no_utilizadas = hh_total
     elif estado == "No ejecutado":
         no_utilizadas = hh_total
-
     brecha_tipo = ""
     if causal_code == "C07":
         brecha_tipo = "Capacidad insuficiente"
     elif causal_code in {"C02", "C03", "C04", "C05", "C06", "C08"}:
         brecha_tipo = "Condicion operacional / mandante"
-
     brecha_categoria = ""
     if causal_code == "C07":
         brecha_categoria = "Falta dotacion"
@@ -230,7 +270,6 @@ def classify_hh(estado: str, causal: str, hh_total: float, hh_directa_in: float 
         brecha_categoria = "Cambio prioridad"
     elif causal_code in {"C05", "C08"}:
         brecha_categoria = "Interferencias"
-
     return {
         "hh_directas": round(directas, 2),
         "hh_indirectas": round(indirectas, 2),
@@ -247,11 +286,7 @@ def ordenar_por_listado(nombres: list[str], listado: list[str]) -> list[str]:
 
 
 def present_count(conn: sqlite3.Connection, fecha: str, turno: str, cuadrilla: str) -> int:
-    return int(scalar(
-        conn,
-        "SELECT COUNT(*) FROM asistencia WHERE fecha = ? AND turno = ? AND cuadrilla = ? AND estado = 'Presente'",
-        (fecha, turno, cuadrilla),
-    ))
+    return int(scalar(conn, "SELECT COUNT(*) FROM asistencia WHERE fecha = ? AND turno = ? AND cuadrilla = ? AND estado = 'Presente'", (fecha, turno, cuadrilla)))
 
 
 def get_options(conn: sqlite3.Connection, fecha: str | None = None, turno: str | None = None, supervisor: str | None = None) -> dict:
@@ -266,15 +301,11 @@ def get_options(conn: sqlite3.Connection, fecha: str | None = None, turno: str |
             supervisor_filter = "AND supervisor = ?"
             params.append(supervisor)
         trabajadores = ordenar_por_listado(
-            [r["trabajador"] for r in conn.execute(
-                f"SELECT DISTINCT trabajador FROM asistencia WHERE fecha = ? AND turno = ? AND estado = 'Presente' AND cargo = 'Soldador' AND enviado_en IS NOT NULL {supervisor_filter}",
-                tuple(params),
-            )],
+            [r["trabajador"] for r in conn.execute(f"SELECT DISTINCT trabajador FROM asistencia WHERE fecha = ? AND turno = ? AND estado = 'Presente' AND cargo = 'Soldador' AND enviado_en IS NOT NULL {supervisor_filter}", tuple(params))],
             TRABAJADORES,
         )
     if not trabajadores and not (fecha and turno):
         trabajadores = ordenar_por_listado([r["nombre"] for r in conn.execute("SELECT nombre FROM trabajadores")], TRABAJADORES)
-    trabajadores_disponibles = trabajadores if fecha and turno else (trabajadores or TRABAJADORES)
     return {
         "turnos": TURNOS,
         "equipos": equipos or EQUIPOS,
@@ -283,7 +314,7 @@ def get_options(conn: sqlite3.Connection, fecha: str | None = None, turno: str |
         "causales": CAUSALES,
         "cuadrillas": ["A", "B", "C", "D", "E"],
         "supervisores": supervisores or SUPERVISORES,
-        "trabajadores": trabajadores_disponibles,
+        "trabajadores": trabajadores if fecha and turno else (trabajadores or TRABAJADORES),
         "trabajadores_catalogo": ordenar_por_listado([r["nombre"] for r in conn.execute("SELECT nombre FROM trabajadores")], TRABAJADORES) or TRABAJADORES,
         "hoy": date.today().isoformat(),
     }
@@ -332,6 +363,15 @@ def init_db() -> None:
                 id INTEGER PRIMARY KEY AUTOINCREMENT, nombre TEXT NOT NULL UNIQUE,
                 cargo TEXT NOT NULL DEFAULT 'Soldador', especialidad TEXT NOT NULL DEFAULT 'Soldadura'
             );
+            CREATE TABLE IF NOT EXISTS usuarios (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT NOT NULL UNIQUE,
+                password_hash TEXT NOT NULL,
+                rol TEXT NOT NULL DEFAULT 'supervisor',
+                supervisor_nombre TEXT,
+                activo INTEGER NOT NULL DEFAULT 1,
+                creado_en TEXT NOT NULL DEFAULT (datetime('now'))
+            );
         """)
         for col, defn in [
             ("trabajadores_asignados", "TEXT"), ("personas_asignadas", "INTEGER"),
@@ -365,6 +405,15 @@ def seed_catalogs(conn):
         conn.executemany(
             "INSERT INTO cuadrillas(nombre, trabajador, cargo, especialidad, activo) VALUES ('Soldadores', ?, 'Soldador', 'Soldadura', 1)",
             [(x,) for x in TRABAJADORES],
+        )
+    # Crear usuario admin inicial si no existe ninguno
+    if scalar(conn, "SELECT COUNT(*) FROM usuarios") == 0:
+        admin_user = os.environ.get("ADMIN_USER", "admin")
+        admin_pass = os.environ.get("ADMIN_PASSWORD", "Soldesp2026!")
+        password_hash = bcrypt.hashpw(admin_pass.encode(), bcrypt.gensalt()).decode()
+        conn.execute(
+            "INSERT INTO usuarios(username, password_hash, rol, supervisor_nombre, activo) VALUES (?, ?, 'admin', NULL, 1)",
+            (admin_user, password_hash),
         )
 
 
@@ -417,12 +466,8 @@ def frente_form_data(conn, form):
 
 def hh_excedidas_guardado(conn, data: dict, frente_id: int | None = None) -> list[dict]:
     actuales = hh_asignadas_por_persona(conn, data["fecha"], data["turno"], exclude_id=frente_id)
-    excedidos = []
-    for nombre in data["asignados"]:
-        total = round(actuales.get(nombre, 0.0) + data["duracion"], 2)
-        if total > LIMITE_HH_PERSONA:
-            excedidos.append({"nombre": nombre, "hh": total})
-    return excedidos
+    return [{"nombre": n, "hh": round(actuales.get(n, 0.0) + data["duracion"], 2)}
+            for n in data["asignados"] if round(actuales.get(n, 0.0) + data["duracion"], 2) > LIMITE_HH_PERSONA]
 
 
 def insert_frente(conn, form):
@@ -436,15 +481,13 @@ def insert_frente(conn, form):
             advertencia, brecha_tipo, brecha_categoria, creado_en,
             trabajadores_asignados, personas_asignadas, art, checklist, permiso_trabajo
         ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-        (
-            data["fecha"], data["turno"], data["supervisor"], data["nombre_tarea"],
-            data["equipo"], data["actividad"], data["cuadrilla"],
-            data["hora_inicio"], data["hora_termino"], data["estado"], data["causal"],
-            data["observacion"], data["duracion_bruta"], data["colacion"], data["duracion"], data["personas"], data["hh_total"],
-            data["cls"]["hh_directas"], data["cls"]["hh_indirectas"], data["cls"]["hh_no_utilizadas"], data["cls"]["advertencia"],
-            data["cls"]["brecha_tipo"], data["cls"]["brecha_categoria"], datetime.now().isoformat(timespec="seconds"),
-            json.dumps(data["asignados"], ensure_ascii=False), data["personas"], "Si", "Si", "Si",
-        ),
+        (data["fecha"], data["turno"], data["supervisor"], data["nombre_tarea"],
+         data["equipo"], data["actividad"], data["cuadrilla"],
+         data["hora_inicio"], data["hora_termino"], data["estado"], data["causal"],
+         data["observacion"], data["duracion_bruta"], data["colacion"], data["duracion"], data["personas"], data["hh_total"],
+         data["cls"]["hh_directas"], data["cls"]["hh_indirectas"], data["cls"]["hh_no_utilizadas"], data["cls"]["advertencia"],
+         data["cls"]["brecha_tipo"], data["cls"]["brecha_categoria"], datetime.now().isoformat(timespec="seconds"),
+         json.dumps(data["asignados"], ensure_ascii=False), data["personas"], "Si", "Si", "Si"),
     )
 
 
@@ -452,22 +495,20 @@ def update_frente(conn, frente_id: int, form):
     data = frente_form_data(conn, form)
     conn.execute(
         """UPDATE frentes SET
-            fecha = ?, turno = ?, supervisor = ?, nombre_tarea = ?, equipo = ?, actividad = ?, cuadrilla = ?,
-            hora_inicio = ?, hora_termino = ?, estado = ?, causal = ?, observacion = ?,
-            duracion_bruta = ?, colacion_descontada = ?, duracion = ?, personas_presentes = ?,
-            hh_total = ?, hh_directas = ?, hh_indirectas = ?, hh_no_utilizadas = ?,
-            advertencia = ?, brecha_tipo = ?, brecha_categoria = ?,
-            trabajadores_asignados = ?, personas_asignadas = ?
-        WHERE id = ?""",
-        (
-            data["fecha"], data["turno"], data["supervisor"], data["nombre_tarea"],
-            data["equipo"], data["actividad"], data["cuadrilla"],
-            data["hora_inicio"], data["hora_termino"], data["estado"], data["causal"],
-            data["observacion"], data["duracion_bruta"], data["colacion"], data["duracion"], data["personas"],
-            data["hh_total"], data["cls"]["hh_directas"], data["cls"]["hh_indirectas"], data["cls"]["hh_no_utilizadas"],
-            data["cls"]["advertencia"], data["cls"]["brecha_tipo"], data["cls"]["brecha_categoria"],
-            json.dumps(data["asignados"], ensure_ascii=False), data["personas"], frente_id,
-        ),
+            fecha=?, turno=?, supervisor=?, nombre_tarea=?, equipo=?, actividad=?, cuadrilla=?,
+            hora_inicio=?, hora_termino=?, estado=?, causal=?, observacion=?,
+            duracion_bruta=?, colacion_descontada=?, duracion=?, personas_presentes=?,
+            hh_total=?, hh_directas=?, hh_indirectas=?, hh_no_utilizadas=?,
+            advertencia=?, brecha_tipo=?, brecha_categoria=?,
+            trabajadores_asignados=?, personas_asignadas=?
+        WHERE id=?""",
+        (data["fecha"], data["turno"], data["supervisor"], data["nombre_tarea"],
+         data["equipo"], data["actividad"], data["cuadrilla"],
+         data["hora_inicio"], data["hora_termino"], data["estado"], data["causal"],
+         data["observacion"], data["duracion_bruta"], data["colacion"], data["duracion"], data["personas"],
+         data["hh_total"], data["cls"]["hh_directas"], data["cls"]["hh_indirectas"], data["cls"]["hh_no_utilizadas"],
+         data["cls"]["advertencia"], data["cls"]["brecha_tipo"], data["cls"]["brecha_categoria"],
+         json.dumps(data["asignados"], ensure_ascii=False), data["personas"], frente_id),
     )
 
 
@@ -496,55 +537,131 @@ def offline():
     return render_template("offline.html")
 
 
+# ---------------------------------------------------------------------------
+# Autenticacion
+# ---------------------------------------------------------------------------
+
+@app.route("/login", methods=["GET", "POST"])
+def login_page():
+    if current_user.is_authenticated:
+        return redirect(url_for("index"))
+    error = None
+    if request.method == "POST":
+        username = request.form.get("username", "").strip()
+        password = request.form.get("password", "").encode()
+        with db() as conn:
+            row = conn.execute("SELECT * FROM usuarios WHERE username = ? AND activo = 1", (username,)).fetchone()
+        if row and bcrypt.checkpw(password, row["password_hash"].encode()):
+            user = Usuario(row["id"], row["username"], row["rol"], row["supervisor_nombre"], row["activo"])
+            login_user(user)
+            return redirect(request.args.get("next") or url_for("index"))
+        error = "Usuario o contraseña incorrectos."
+    return render_template("login.html", error=error)
+
+
+@app.route("/logout")
+@login_required
+def logout():
+    logout_user()
+    return redirect(url_for("login_page"))
+
+
+@app.route("/admin")
+@login_required
+@admin_required
+def admin_panel():
+    with db() as conn:
+        usuarios = conn.execute("SELECT * FROM usuarios ORDER BY rol, username").fetchall()
+    return render_template("admin.html", usuarios=usuarios, supervisores=SUPERVISORES,
+                           msg=request.args.get("msg"), error=request.args.get("error"))
+
+
+@app.route("/admin/crear_usuario", methods=["POST"])
+@login_required
+@admin_required
+def admin_crear_usuario():
+    username = request.form.get("username", "").strip()
+    password = request.form.get("password", "").strip()
+    rol = request.form.get("rol", "supervisor")
+    supervisor_nombre = request.form.get("supervisor_nombre") or None
+    if not username or not password or len(password) < 6:
+        return redirect(url_for("admin_panel", error="Usuario y contraseña requeridos (min 6 caracteres)."))
+    password_hash = bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
+    try:
+        with db() as conn:
+            conn.execute(
+                "INSERT INTO usuarios(username, password_hash, rol, supervisor_nombre, activo) VALUES (?, ?, ?, ?, 1)",
+                (username, password_hash, rol, supervisor_nombre),
+            )
+        return redirect(url_for("admin_panel", msg=f"Usuario '{username}' creado correctamente."))
+    except Exception:
+        return redirect(url_for("admin_panel", error=f"El usuario '{username}' ya existe."))
+
+
+@app.route("/admin/toggle_user/<int:uid>", methods=["POST"])
+@login_required
+@admin_required
+def admin_toggle_user(uid):
+    with db() as conn:
+        row = conn.execute("SELECT activo, username FROM usuarios WHERE id = ?", (uid,)).fetchone()
+        if row and row["username"] != current_user.username:
+            conn.execute("UPDATE usuarios SET activo = ? WHERE id = ?", (0 if row["activo"] else 1, uid))
+    return redirect(url_for("admin_panel", msg="Estado actualizado."))
+
+
+@app.route("/admin/reset_password/<int:uid>", methods=["POST"])
+@login_required
+@admin_required
+def admin_reset_password(uid):
+    nueva = request.form.get("nueva_password", "Soldesp2026")
+    password_hash = bcrypt.hashpw(nueva.encode(), bcrypt.gensalt()).decode()
+    with db() as conn:
+        conn.execute("UPDATE usuarios SET password_hash = ? WHERE id = ?", (password_hash, uid))
+    return redirect(url_for("admin_panel", msg=f"Contraseña reseteada a: {nueva}"))
+
+
+# ---------------------------------------------------------------------------
+# Rutas principales
+# ---------------------------------------------------------------------------
+
 @app.route("/")
+@login_required
 def index():
     with db() as conn:
         fecha = request.args.get("fecha") or date.today().isoformat()
         turno = request.args.get("turno") or "Dia"
         supervisor = request.args.get("supervisor") or ""
+        # Supervisor solo ve sus propios datos
+        if current_user.rol == "supervisor" and current_user.supervisor_nombre:
+            supervisor = current_user.supervisor_nombre
         asistencia_enviada = False
         if request.args.get("fecha") and request.args.get("turno"):
             params = [fecha, turno]
-            supervisor_filter = ""
+            sf = ""
             if supervisor:
-                supervisor_filter = "AND supervisor = ?"
+                sf = "AND supervisor = ?"
                 params.append(supervisor)
-            asistencia_enviada = scalar(
-                conn,
-                f"""SELECT COUNT(*) FROM asistencia
-                    WHERE fecha = ? AND turno = ? AND estado = 'Presente'
-                    AND enviado_en IS NOT NULL {supervisor_filter}""",
-                tuple(params),
-            ) > 0
-        asistentes = scalar(
-            conn,
-            f"""SELECT COUNT(*) FROM asistencia
-                WHERE fecha = ? AND turno = ? AND estado = 'Presente'
-                AND enviado_en IS NOT NULL {"AND supervisor = ?" if supervisor else ""}""",
-            (fecha, turno, supervisor) if supervisor else (fecha, turno),
-        ) if asistencia_enviada else 0
+            asistencia_enviada = scalar(conn, f"SELECT COUNT(*) FROM asistencia WHERE fecha = ? AND turno = ? AND estado = 'Presente' AND enviado_en IS NOT NULL {sf}", tuple(params)) > 0
+        asistentes = scalar(conn, f"SELECT COUNT(*) FROM asistencia WHERE fecha = ? AND turno = ? AND estado = 'Presente' AND enviado_en IS NOT NULL {'AND supervisor = ?' if supervisor else ''}", (fecha, turno, supervisor) if supervisor else (fecha, turno)) if asistencia_enviada else 0
         actividades = scalar(conn, "SELECT COUNT(*) FROM frentes WHERE fecha = ? AND turno = ?", (fecha, turno)) if asistencia_enviada else 0
         validaciones = validaciones_turno(conn, fecha, turno) if asistencia_enviada else {"total": 0}
-        contexto = {"fecha": fecha, "turno": turno, "supervisor": supervisor}
-        flujo = {
-            "asistencia_enviada": asistencia_enviada,
-            "asistentes": asistentes,
-            "actividades": actividades,
-            "validaciones": validaciones,
-            "contexto": contexto,
-        }
+        flujo = {"asistencia_enviada": asistencia_enviada, "asistentes": asistentes, "actividades": actividades, "validaciones": validaciones, "contexto": {"fecha": fecha, "turno": turno, "supervisor": supervisor}}
         response = make_response(render_template("index.html", flujo=flujo))
         response.headers["Cache-Control"] = "no-store, max-age=0"
         return response
 
 
 @app.route("/asistencia", methods=["GET", "POST"])
+@login_required
 def asistencia():
     with db() as conn:
         if request.method == "POST":
             fecha = request.form.get("fecha") or date.today().isoformat()
             turno = request.form.get("turno") or "Dia"
             supervisor = request.form.get("supervisor") or ""
+            # Supervisor solo puede registrar su propio nombre
+            if current_user.rol == "supervisor" and current_user.supervisor_nombre:
+                supervisor = current_user.supervisor_nombre
             accion = request.form.get("accion") or "guardar"
             default_ingreso = "19:15" if turno == "Noche" else "07:15"
             default_salida = "07:15" if turno == "Noche" else "19:15"
@@ -566,81 +683,66 @@ def asistencia():
                 conn.execute("DELETE FROM asistencia WHERE fecha < ?", (fecha,))
                 conn.execute("DELETE FROM frentes WHERE fecha < ?", (fecha,))
                 conn.execute("DELETE FROM demanda WHERE fecha < ?", (fecha,))
-            conn.execute(
-                "DELETE FROM asistencia WHERE fecha = ? AND turno = ? AND supervisor = ?",
-                (fecha, turno, supervisor),
-            )
+            conn.execute("DELETE FROM asistencia WHERE fecha = ? AND turno = ? AND supervisor = ?", (fecha, turno, supervisor))
             conn.executemany(
-                """INSERT INTO asistencia(fecha, turno, supervisor, trabajador, cargo, especialidad, cuadrilla, estado, hora_ingreso, hora_salida, hh_disponibles, enviado_en, motivo_ausencia)
-                VALUES (?, ?, ?, ?, 'Soldador', 'Soldadura', 'Turno', 'Presente', ?, ?, ?, ?, '')""",
+                "INSERT INTO asistencia(fecha, turno, supervisor, trabajador, cargo, especialidad, cuadrilla, estado, hora_ingreso, hora_salida, hh_disponibles, enviado_en, motivo_ausencia) VALUES (?, ?, ?, ?, 'Soldador', 'Soldadura', 'Turno', 'Presente', ?, ?, ?, ?, '')",
                 [(fecha, turno, supervisor, t, ingreso, salida, hh, enviado_en) for t in presentes],
             )
             conn.executemany(
-                """INSERT INTO asistencia(fecha, turno, supervisor, trabajador, cargo, especialidad, cuadrilla, estado, hora_ingreso, hora_salida, hh_disponibles, enviado_en, motivo_ausencia)
-                VALUES (?, ?, ?, ?, 'Soldador', 'Soldadura', 'Turno', 'Ausente', '', '', 0, ?, ?)""",
+                "INSERT INTO asistencia(fecha, turno, supervisor, trabajador, cargo, especialidad, cuadrilla, estado, hora_ingreso, hora_salida, hh_disponibles, enviado_en, motivo_ausencia) VALUES (?, ?, ?, ?, 'Soldador', 'Soldadura', 'Turno', 'Ausente', '', '', 0, ?, ?)",
                 [(fecha, turno, supervisor, nombre, enviado_en, motivo) for nombre, motivo in ausentes],
             )
             if supervisor:
                 conn.execute(
-                    """INSERT INTO asistencia(fecha, turno, supervisor, trabajador, cargo, especialidad, cuadrilla, estado, hora_ingreso, hora_salida, hh_disponibles, enviado_en, motivo_ausencia)
-                    VALUES (?, ?, ?, ?, 'Supervisor', 'Supervision', 'Supervision', 'Presente', ?, ?, ?, ?, '')""",
+                    "INSERT INTO asistencia(fecha, turno, supervisor, trabajador, cargo, especialidad, cuadrilla, estado, hora_ingreso, hora_salida, hh_disponibles, enviado_en, motivo_ausencia) VALUES (?, ?, ?, ?, 'Supervisor', 'Supervision', 'Supervision', 'Presente', ?, ?, ?, ?, '')",
                     (fecha, turno, supervisor, supervisor, ingreso, salida, hh, enviado_en),
                 )
             conn.executemany("INSERT OR IGNORE INTO trabajadores(nombre) VALUES (?)", [(x,) for x in manuales])
             if accion == "enviar":
                 conn.commit()
                 run_background_task("attendance email", send_asistencia_turno, fecha, turno, supervisor)
-                return redirect(url_for(
-                    "frentes",
-                    fecha=fecha,
-                    turno=turno,
-                    supervisor=supervisor,
-                    msg="Asistencia enviada. Correo en camino a los destinatarios.",
-                ))
+                return redirect(url_for("frentes", fecha=fecha, turno=turno, supervisor=supervisor, msg="Asistencia enviada. Correo en camino a los destinatarios."))
             return redirect(url_for("asistencia"))
         rows = conn.execute("SELECT * FROM asistencia ORDER BY fecha DESC, turno, supervisor, enviado_en DESC, trabajador").fetchall()
-        ultima_asistencia = conn.execute(
-            """SELECT fecha, turno, supervisor
-               FROM asistencia
-               WHERE estado = 'Presente' AND enviado_en IS NOT NULL
-               ORDER BY enviado_en DESC, id DESC
-               LIMIT 1"""
-        ).fetchone()
+        ultima_asistencia = conn.execute("SELECT fecha, turno, supervisor FROM asistencia WHERE estado = 'Presente' AND enviado_en IS NOT NULL ORDER BY enviado_en DESC, id DESC LIMIT 1").fetchone()
         turno_sel = request.args.get("turno", "Dia")
         hora_ing = "07:15" if turno_sel == "Dia" else "19:15"
         hora_sal = "19:15" if turno_sel == "Dia" else "07:15"
+        # Pre-seleccionar supervisor si es rol supervisor
+        supervisor_fijo = current_user.supervisor_nombre if current_user.rol == "supervisor" else None
         return render_template("asistencia.html", rows=rows, opts=get_options(conn), turno_sel=turno_sel,
                                hora_ing=hora_ing, hora_sal=hora_sal, ultima_asistencia=ultima_asistencia,
+                               supervisor_fijo=supervisor_fijo,
                                error=request.args.get("error"), msg=request.args.get("msg"))
 
 
 @app.route("/enviar_asistencia_pendiente", methods=["POST"])
+@login_required
 def enviar_asistencia_pendiente():
     fecha = request.form.get("fecha") or date.today().isoformat()
     turno = request.form.get("turno") or "Dia"
     supervisor = request.form.get("supervisor") or ""
     with db() as conn:
-        conn.execute(
-            "UPDATE asistencia SET enviado_en = ? WHERE fecha = ? AND turno = ? AND supervisor = ? AND estado = 'Presente' AND enviado_en IS NULL",
-            (datetime.now().isoformat(timespec="seconds"), fecha, turno, supervisor),
-        )
+        conn.execute("UPDATE asistencia SET enviado_en = ? WHERE fecha = ? AND turno = ? AND supervisor = ? AND estado = 'Presente' AND enviado_en IS NULL",
+                     (datetime.now().isoformat(timespec="seconds"), fecha, turno, supervisor))
     return redirect(url_for("frentes", fecha=fecha, turno=turno, supervisor=supervisor))
 
 
 @app.route("/cuadrillas", methods=["GET", "POST"])
+@login_required
+@admin_required
 def cuadrillas():
     with db() as conn:
         if request.method == "POST":
-            conn.execute(
-                "INSERT INTO cuadrillas(nombre, trabajador, cargo, especialidad, activo) VALUES (?, ?, ?, ?, ?)",
-                (request.form.get("nombre"), request.form.get("trabajador"), request.form.get("cargo"), request.form.get("especialidad"), 1 if request.form.get("activo") else 0),
-            )
+            conn.execute("INSERT INTO cuadrillas(nombre, trabajador, cargo, especialidad, activo) VALUES (?, ?, ?, ?, ?)",
+                         (request.form.get("nombre"), request.form.get("trabajador"), request.form.get("cargo"), request.form.get("especialidad"), 1 if request.form.get("activo") else 0))
             return redirect(url_for("cuadrillas"))
         rows = conn.execute("SELECT * FROM cuadrillas ORDER BY nombre, trabajador").fetchall()
         return render_template("cuadrillas.html", rows=rows)
 
 
 @app.route("/frentes", methods=["GET", "POST"])
+@login_required
 def frentes():
     with db() as conn:
         gate = require_asistencia_redirect(conn)
@@ -652,25 +754,19 @@ def frentes():
             excedidos = hh_excedidas_guardado(conn, data, frente_id)
             if excedidos:
                 detalle = "; ".join([f"{x['nombre']} quedaria con {x['hh']} HH" for x in excedidos])
-                return redirect(url_for(
-                    "frentes",
-                    fecha=data["fecha"], turno=data["turno"], supervisor=data["supervisor"],
-                    edit_id=frente_id or "",
-                    error=f"No se guardo: {detalle}. Ajusta personas u horario antes de continuar.",
-                ))
+                return redirect(url_for("frentes", fecha=data["fecha"], turno=data["turno"], supervisor=data["supervisor"], edit_id=frente_id or "", error=f"No se guardo: {detalle}."))
             if frente_id:
                 update_frente(conn, frente_id, request.form)
             else:
                 insert_frente(conn, request.form)
             return redirect(url_for("frentes", fecha=data["fecha"], turno=data["turno"], supervisor=data["supervisor"]))
-        ultima_asistencia = conn.execute(
-            """SELECT fecha, turno, supervisor FROM asistencia
-               WHERE estado = 'Presente' AND enviado_en IS NOT NULL
-               ORDER BY enviado_en DESC, id DESC LIMIT 1"""
-        ).fetchone()
+        ultima_asistencia = conn.execute("SELECT fecha, turno, supervisor FROM asistencia WHERE estado = 'Presente' AND enviado_en IS NOT NULL ORDER BY enviado_en DESC, id DESC LIMIT 1").fetchone()
         fecha = request.args.get("fecha") or (ultima_asistencia["fecha"] if ultima_asistencia else date.today().isoformat())
         turno = request.args.get("turno") or (ultima_asistencia["turno"] if ultima_asistencia else "Dia")
         supervisor = request.args.get("supervisor") or (ultima_asistencia["supervisor"] if ultima_asistencia else "")
+        # Supervisor solo ve sus propios frentes
+        if current_user.rol == "supervisor" and current_user.supervisor_nombre:
+            supervisor = current_user.supervisor_nombre
         rows = conn.execute("SELECT * FROM frentes WHERE fecha = ? AND turno = ? ORDER BY id DESC", (fecha, turno)).fetchall()
         last = conn.execute("SELECT * FROM frentes WHERE fecha = ? AND turno = ? ORDER BY id DESC LIMIT 1", (fecha, turno)).fetchone()
         edit_id = int(request.args.get("edit_id") or 0)
@@ -696,15 +792,13 @@ def frentes():
 
 
 @app.route("/demanda", methods=["GET", "POST"])
+@login_required
+@admin_required
 def demanda():
     with db() as conn:
         if request.method == "POST":
-            conn.execute(
-                "INSERT INTO demanda(fecha, turno, equipo, actividad, prioridad, estado_equipo, hh_requeridas, restriccion, observacion) VALUES (?,?,?,?,?,?,?,?,?)",
-                (request.form.get("fecha"), request.form.get("turno"), request.form.get("equipo"),
-                 request.form.get("actividad"), request.form.get("prioridad"), request.form.get("estado_equipo"),
-                 float(request.form.get("hh_requeridas") or 0), request.form.get("restriccion"), request.form.get("observacion")),
-            )
+            conn.execute("INSERT INTO demanda(fecha, turno, equipo, actividad, prioridad, estado_equipo, hh_requeridas, restriccion, observacion) VALUES (?,?,?,?,?,?,?,?,?)",
+                         (request.form.get("fecha"), request.form.get("turno"), request.form.get("equipo"), request.form.get("actividad"), request.form.get("prioridad"), request.form.get("estado_equipo"), float(request.form.get("hh_requeridas") or 0), request.form.get("restriccion"), request.form.get("observacion")))
             return redirect(url_for("demanda"))
         rows = conn.execute("SELECT * FROM demanda ORDER BY fecha DESC, turno, equipo").fetchall()
         return render_template("demanda.html", rows=rows, opts=get_options(conn))
@@ -726,14 +820,7 @@ def dashboard_data(conn, fecha, turno):
         "Cambio prioridad": scalar(conn, "SELECT SUM(hh_no_utilizadas + hh_indirectas) FROM frentes WHERE fecha = ? AND turno = ? AND brecha_categoria = 'Cambio prioridad'", (fecha, turno)),
         "Interferencias": scalar(conn, "SELECT SUM(hh_no_utilizadas + hh_indirectas) FROM frentes WHERE fecha = ? AND turno = ? AND brecha_categoria = 'Interferencias'", (fecha, turno)),
     }
-    if requeridas > disponibles:
-        semaforo = "Rojo"
-    elif asignadas < disponibles * 0.55 and categorias["Falta liberacion/frente"] > 0:
-        semaforo = "Gris"
-    elif requeridas >= disponibles * 0.9:
-        semaforo = "Amarillo"
-    else:
-        semaforo = "Verde"
+    semaforo = "Rojo" if requeridas > disponibles else ("Gris" if asignadas < disponibles * 0.55 and categorias["Falta liberacion/frente"] > 0 else ("Amarillo" if requeridas >= disponibles * 0.9 else "Verde"))
     causales = conn.execute("SELECT causal, COUNT(*) total FROM frentes WHERE fecha = ? AND turno = ? GROUP BY causal ORDER BY total DESC", (fecha, turno)).fetchall()
     return {"presentes": presentes, "disponibles": round(disponibles, 2), "directas": round(directas, 2),
             "indirectas": round(indirectas, 2), "requeridas": round(requeridas, 2), "asignadas": round(asignadas, 2),
@@ -742,6 +829,7 @@ def dashboard_data(conn, fecha, turno):
 
 
 @app.route("/dashboard")
+@login_required
 def dashboard():
     fecha = request.args.get("fecha", date.today().isoformat())
     turno = request.args.get("turno", "Dia")
@@ -749,14 +837,12 @@ def dashboard():
         gate = require_asistencia_redirect(conn)
         if gate:
             return gate
-        asistentes = conn.execute(
-            "SELECT trabajador, cargo FROM asistencia WHERE fecha = ? AND turno = ? AND estado = 'Presente' AND enviado_en IS NOT NULL ORDER BY CASE WHEN cargo = 'Supervisor' THEN 0 ELSE 1 END, trabajador",
-            (fecha, turno),
-        ).fetchall()
+        asistentes = conn.execute("SELECT trabajador, cargo FROM asistencia WHERE fecha = ? AND turno = ? AND estado = 'Presente' AND enviado_en IS NOT NULL ORDER BY CASE WHEN cargo = 'Supervisor' THEN 0 ELSE 1 END, trabajador", (fecha, turno)).fetchall()
         return render_template("dashboard.html", data=dashboard_data(conn, fecha, turno), asistentes=asistentes, fecha=fecha, turno=turno, opts=get_options(conn))
 
 
 @app.route("/cierre")
+@login_required
 def cierre():
     fecha = request.args.get("fecha", date.today().isoformat())
     turno = request.args.get("turno", "Dia")
@@ -766,54 +852,35 @@ def cierre():
             return gate
         rows = conn.execute("SELECT * FROM frentes WHERE fecha = ? AND turno = ? ORDER BY hora_inicio, id", (fecha, turno)).fetchall()
         validaciones = validaciones_turno(conn, fecha, turno)
-        return render_template("cierre.html", rows=rows, data=dashboard_data(conn, fecha, turno),
-                               validaciones=validaciones, fecha=fecha, turno=turno, opts=get_options(conn),
-                               error=request.args.get("error"), msg=request.args.get("msg"))
+        return render_template("cierre.html", rows=rows, data=dashboard_data(conn, fecha, turno), validaciones=validaciones, fecha=fecha, turno=turno, opts=get_options(conn), error=request.args.get("error"), msg=request.args.get("msg"))
 
 
 def hh_asignadas_por_persona(conn, fecha: str, turno: str, exclude_id: int | None = None) -> dict[str, float]:
-    hh_por_persona: dict[str, float] = {}
+    hh: dict[str, float] = {}
     params: list = [fecha, turno]
     extra = ""
     if exclude_id:
         extra = " AND id <> ?"
         params.append(exclude_id)
-    frentes_rows = conn.execute(
-        f"SELECT trabajadores_asignados, duracion FROM frentes WHERE fecha = ? AND turno = ?{extra}",
-        tuple(params),
-    ).fetchall()
-    for f in frentes_rows:
+    for f in conn.execute(f"SELECT trabajadores_asignados, duracion FROM frentes WHERE fecha = ? AND turno = ?{extra}", tuple(params)).fetchall():
         try:
             asignados = json.loads(f["trabajadores_asignados"] or "[]")
         except Exception:
             asignados = []
         for nombre in asignados:
-            hh_por_persona[nombre] = round(hh_por_persona.get(nombre, 0.0) + float(f["duracion"] or 0), 2)
-    return hh_por_persona
+            hh[nombre] = round(hh.get(nombre, 0.0) + float(f["duracion"] or 0), 2)
+    return hh
 
 
 def validaciones_turno(conn, fecha: str, turno: str) -> dict:
-    presentes = {r["trabajador"]: r["cargo"] for r in conn.execute(
-        "SELECT trabajador, cargo FROM asistencia WHERE fecha = ? AND turno = ? AND estado = 'Presente' AND enviado_en IS NOT NULL",
-        (fecha, turno),
-    )}
+    presentes = {r["trabajador"]: r["cargo"] for r in conn.execute("SELECT trabajador, cargo FROM asistencia WHERE fecha = ? AND turno = ? AND estado = 'Presente' AND enviado_en IS NOT NULL", (fecha, turno))}
     hh_por_persona = hh_asignadas_por_persona(conn, fecha, turno)
-    soldadores = [nombre for nombre, cargo in presentes.items() if cargo != "Supervisor"]
-    excedidos = [{"nombre": nombre, "hh": hh} for nombre, hh in hh_por_persona.items() if hh > LIMITE_HH_PERSONA]
-    sin_actividad = [{"nombre": nombre, "hh": hh_por_persona.get(nombre, 0.0)} for nombre in soldadores if hh_por_persona.get(nombre, 0.0) == 0.0]
-    frentes_abiertos = [dict(r) for r in conn.execute(
-        "SELECT id, nombre_tarea, equipo, estado, hora_inicio, hora_termino FROM frentes WHERE fecha = ? AND turno = ? AND estado = 'En proceso' ORDER BY hora_inicio, id",
-        (fecha, turno),
-    )]
-    parciales = [dict(r) for r in conn.execute(
-        "SELECT id, nombre_tarea, equipo, advertencia FROM frentes WHERE fecha = ? AND turno = ? AND advertencia IS NOT NULL AND advertencia <> '' ORDER BY hora_inicio, id",
-        (fecha, turno),
-    )]
-    return {
-        "excedidos": excedidos, "sin_actividad": sin_actividad,
-        "frentes_abiertos": frentes_abiertos, "parciales": parciales,
-        "total": len(excedidos) + len(sin_actividad) + len(frentes_abiertos) + len(parciales),
-    }
+    soldadores = [n for n, c in presentes.items() if c != "Supervisor"]
+    excedidos = [{"nombre": n, "hh": h} for n, h in hh_por_persona.items() if h > LIMITE_HH_PERSONA]
+    sin_actividad = [{"nombre": n, "hh": hh_por_persona.get(n, 0.0)} for n in soldadores if hh_por_persona.get(n, 0.0) == 0.0]
+    frentes_abiertos = [dict(r) for r in conn.execute("SELECT id, nombre_tarea, equipo, estado, hora_inicio, hora_termino FROM frentes WHERE fecha = ? AND turno = ? AND estado = 'En proceso' ORDER BY hora_inicio, id", (fecha, turno))]
+    parciales = [dict(r) for r in conn.execute("SELECT id, nombre_tarea, equipo, advertencia FROM frentes WHERE fecha = ? AND turno = ? AND advertencia IS NOT NULL AND advertencia <> '' ORDER BY hora_inicio, id", (fecha, turno))]
+    return {"excedidos": excedidos, "sin_actividad": sin_actividad, "frentes_abiertos": frentes_abiertos, "parciales": parciales, "total": len(excedidos) + len(sin_actividad) + len(frentes_abiertos) + len(parciales)}
 
 
 def asistencia_export_rows(conn):
@@ -822,9 +889,7 @@ def asistencia_export_rows(conn):
              "Estado": r["estado"], "Motivo ausencia": r["motivo_ausencia"] or "",
              "Hora ingreso": r["hora_ingreso"], "Hora salida": r["hora_salida"],
              "HH disponibles": r["hh_disponibles"], "Envio asistencia": r["enviado_en"]}
-            for r in conn.execute(
-                "SELECT * FROM asistencia WHERE enviado_en IS NOT NULL ORDER BY fecha, turno, supervisor, CASE WHEN cargo = 'Supervisor' THEN 0 WHEN estado = 'Presente' THEN 1 ELSE 2 END, trabajador"
-            )]
+            for r in conn.execute("SELECT * FROM asistencia WHERE enviado_en IS NOT NULL ORDER BY fecha, turno, supervisor, CASE WHEN cargo = 'Supervisor' THEN 0 WHEN estado = 'Presente' THEN 1 ELSE 2 END, trabajador")]
 
 
 # ---------------------------------------------------------------------------
@@ -852,14 +917,13 @@ def _write_sheet(ws, rows, col_widths=None):
     for row in rows:
         ws.append([row.get(h, "") for h in headers])
     for col in ws.columns:
-        letter = col[0].column_letter
-        ws.column_dimensions[letter].width = min(max(len(str(c.value or "")) for c in col) + 2, 45)
+        ws.column_dimensions[col[0].column_letter].width = min(max(len(str(c.value or "")) for c in col) + 2, 45)
 
 
 def _brand_existing_header(ws, title: str, merge_to: str):
-    for merged_range in list(ws.merged_cells.ranges):
-        if str(merged_range).startswith("A1:"):
-            ws.unmerge_cells(str(merged_range))
+    for mr in list(ws.merged_cells.ranges):
+        if str(mr).startswith("A1:"):
+            ws.unmerge_cells(str(mr))
     ws["A1"] = ""
     ws.row_dimensions[1].height = 42
     ws.column_dimensions["A"].width = max(ws.column_dimensions["A"].width or 0, 14)
@@ -877,8 +941,7 @@ def _brand_existing_header(ws, title: str, merge_to: str):
 def parse_mail_list(value: str | None) -> list[str]:
     if not value:
         return []
-    normalized = value.replace(";", ",").replace("\n", ",")
-    return [item.strip() for item in normalized.split(",") if item.strip()]
+    return [item.strip() for item in value.replace(";", ",").replace("\n", ",").split(",") if item.strip()]
 
 
 def mail_recipients(kind: str) -> tuple[list[str], list[str], list[str]]:
@@ -890,13 +953,11 @@ def mail_recipients(kind: str) -> tuple[list[str], list[str], list[str]]:
 
 
 def send_excel_email(kind: str, subject: str, body: str, attachment_path: Path, attachment_name: str):
-    """Envia correo con adjunto Excel usando Resend API (HTTPS, no SMTP)."""
     import urllib.request
     api_key = os.environ.get("RESEND_API_KEY")
     sender = os.environ.get("MAIL_FROM", "onboarding@resend.dev")
     sender_name = os.environ.get("MAIL_FROM_NAME", "Reportabilidad Soldesp")
     to, cc, bcc = mail_recipients(kind)
-
     missing = []
     if not api_key:
         missing.append("RESEND_API_KEY")
@@ -904,29 +965,17 @@ def send_excel_email(kind: str, subject: str, body: str, attachment_path: Path, 
         missing.append(f"{'ASSISTANCE' if kind == 'asistencia' else 'REPORT'}_MAIL_TO o MAIL_TO")
     if missing:
         raise RuntimeError("Falta configurar en Render: " + ", ".join(missing))
-
     with open(attachment_path, "rb") as fh:
         attachment_b64 = base64.b64encode(fh.read()).decode()
-
-    payload = {
-        "from": f"{sender_name} <{sender}>",
-        "to": to,
-        "subject": subject,
-        "text": body,
-        "attachments": [{"filename": attachment_name, "content": attachment_b64}],
-    }
+    payload = {"from": f"{sender_name} <{sender}>", "to": to, "subject": subject, "text": body,
+               "attachments": [{"filename": attachment_name, "content": attachment_b64}]}
     if cc:
         payload["cc"] = cc
     if bcc:
         payload["bcc"] = bcc
-
     data = json.dumps(payload).encode("utf-8")
-    req = urllib.request.Request(
-        "https://api.resend.com/emails",
-        data=data,
-        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-        method="POST",
-    )
+    req = urllib.request.Request("https://api.resend.com/emails", data=data,
+                                 headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}, method="POST")
     with urllib.request.urlopen(req, timeout=15) as resp:
         result = json.loads(resp.read().decode())
     app.logger.info("Resend OK id=%s to=%s", result.get("id"), to)
@@ -940,12 +989,7 @@ def send_asistencia_turno(fecha: str, turno: str, supervisor: str):
             raise RuntimeError("Primero debes enviar la asistencia del turno.")
         ruta, nombre_archivo = build_asistencia_excel(conn, fecha, turno)
     subject = f"Asistencia turno {turno} - {fecha}"
-    body = (
-        f"Estimados,\n\n"
-        f"Se adjunta asistencia del turno {turno} correspondiente al {fecha}.\n"
-        f"Supervisor: {supervisor or 'No informado'}.\n\n"
-        f"Saludos,\nReportabilidad Soldesp"
-    )
+    body = f"Estimados,\n\nSe adjunta asistencia del turno {turno} correspondiente al {fecha}.\nSupervisor: {supervisor or 'No informado'}.\n\nSaludos,\nReportabilidad Soldesp"
     return send_excel_email("asistencia", subject, body, ruta, nombre_archivo)
 
 
@@ -956,17 +1000,13 @@ def run_background_task(label: str, func, *args):
             app.logger.info("%s completed", label)
         except Exception:
             app.logger.exception("%s failed", label)
-    thread = threading.Thread(target=worker, daemon=True)
-    thread.start()
+    threading.Thread(target=worker, daemon=True).start()
 
 
 def _hoja_asistencia(conn, wb, fecha, turno):
     ws = wb.create_sheet("Asistencia")
     rows = []
-    for r in conn.execute(
-        "SELECT trabajador, cargo, estado, motivo_ausencia, hora_ingreso, hora_salida, hh_disponibles, enviado_en FROM asistencia WHERE fecha = ? AND turno = ? AND enviado_en IS NOT NULL ORDER BY CASE WHEN cargo = 'Supervisor' THEN 0 WHEN estado = 'Presente' THEN 1 ELSE 2 END, trabajador",
-        (fecha, turno),
-    ):
+    for r in conn.execute("SELECT trabajador, cargo, estado, motivo_ausencia, hora_ingreso, hora_salida, hh_disponibles, enviado_en FROM asistencia WHERE fecha = ? AND turno = ? AND enviado_en IS NOT NULL ORDER BY CASE WHEN cargo = 'Supervisor' THEN 0 WHEN estado = 'Presente' THEN 1 ELSE 2 END, trabajador", (fecha, turno)):
         rows.append({"Fecha": fecha, "Turno": turno, "Nombre": r["trabajador"], "Cargo": r["cargo"],
                      "Estado": r["estado"], "Motivo ausencia": r["motivo_ausencia"] or "",
                      "Hora ingreso": r["hora_ingreso"], "Hora salida": r["hora_salida"],
@@ -983,10 +1023,7 @@ def _hoja_asistencia(conn, wb, fecha, turno):
 def _hoja_actividades(conn, wb, fecha, turno):
     ws = wb.create_sheet("Actividades")
     rows = []
-    for r in conn.execute(
-        "SELECT supervisor, equipo, actividad, hora_inicio, hora_termino, duracion, personas_presentes, trabajadores_asignados, estado, causal, hh_total, hh_directas, hh_indirectas, hh_no_utilizadas, observacion FROM frentes WHERE fecha = ? AND turno = ? ORDER BY hora_inicio, id",
-        (fecha, turno),
-    ):
+    for r in conn.execute("SELECT supervisor, equipo, actividad, hora_inicio, hora_termino, duracion, personas_presentes, trabajadores_asignados, estado, causal, hh_total, hh_directas, hh_indirectas, hh_no_utilizadas, observacion FROM frentes WHERE fecha = ? AND turno = ? ORDER BY hora_inicio, id", (fecha, turno)):
         try:
             asignados_str = ", ".join(json.loads(r["trabajadores_asignados"] or "[]"))
         except Exception:
@@ -1009,15 +1046,12 @@ def _hoja_actividades(conn, wb, fecha, turno):
 def _hoja_resumen_hh(conn, wb, fecha, turno):
     ws = wb.create_sheet("Resumen HH por Persona")
     presentes = {r["trabajador"]: {"cargo": r["cargo"], "hh_disponibles": r["hh_disponibles"]}
-                 for r in conn.execute(
-                     "SELECT trabajador, cargo, hh_disponibles FROM asistencia WHERE fecha = ? AND turno = ? AND estado = 'Presente' AND enviado_en IS NOT NULL",
-                     (fecha, turno))}
+                 for r in conn.execute("SELECT trabajador, cargo, hh_disponibles FROM asistencia WHERE fecha = ? AND turno = ? AND estado = 'Presente' AND enviado_en IS NOT NULL", (fecha, turno))}
     hh_por_persona = hh_asignadas_por_persona(conn, fecha, turno)
     frentes_rows = conn.execute("SELECT id FROM frentes WHERE fecha = ? AND turno = ?", (fecha, turno)).fetchall()
     supervisores_presentes = {n: i for n, i in presentes.items() if i["cargo"] == "Supervisor"}
     soldadores_presentes = {n: i for n, i in presentes.items() if i["cargo"] != "Supervisor"}
     n_actividades = max(len(frentes_rows), 1)
-    hh_sup_por_actividad = round(LIMITE_HH_PERSONA / n_actividades, 2)
     rows = []
     for nombre in sorted(supervisores_presentes.keys()):
         rows.append({"Rol": "Supervision", "Trabajador": nombre, "Cargo": "Supervisor",
@@ -1064,6 +1098,7 @@ def build_asistencia_excel(conn, fecha: str, turno: str) -> tuple[Path, str]:
 
 
 @app.route("/exportar")
+@login_required
 def exportar():
     fecha = request.args.get("fecha", date.today().isoformat())
     turno = request.args.get("turno", "Dia")
@@ -1073,13 +1108,13 @@ def exportar():
             return gate
         validaciones = validaciones_turno(conn, fecha, turno)
         if validaciones["excedidos"]:
-            return redirect(url_for("cierre", fecha=fecha, turno=turno,
-                                    error="No se puede descargar el informe: hay personas sobre 11 HH."))
+            return redirect(url_for("cierre", fecha=fecha, turno=turno, error="No se puede descargar el informe: hay personas sobre 11 HH."))
         ruta, nombre_archivo = build_reporte_excel(conn, fecha, turno)
     return send_file(ruta, as_attachment=True, download_name=nombre_archivo)
 
 
 @app.route("/exportar_asistencia")
+@login_required
 def exportar_asistencia():
     fecha = request.args.get("fecha", date.today().isoformat())
     turno = request.args.get("turno", "Dia")
@@ -1089,14 +1124,15 @@ def exportar_asistencia():
 
 
 @app.route("/enviar_asistencia_email", methods=["POST"])
+@login_required
 def enviar_asistencia_email():
     fecha = request.form.get("fecha") or date.today().isoformat()
     turno = request.form.get("turno") or "Dia"
     supervisor = request.form.get("supervisor") or ""
     next_page = request.form.get("next") or "asistencia"
-    def done_url(message_key: str, message: str):
+    def done_url(mk, mv):
         endpoint = "frentes" if next_page == "frentes" else "asistencia"
-        params = {"turno": turno, message_key: message}
+        params = {"turno": turno, mk: mv}
         if endpoint == "frentes":
             params.update({"fecha": fecha, "supervisor": supervisor})
         return url_for(endpoint, **params)
@@ -1105,6 +1141,7 @@ def enviar_asistencia_email():
 
 
 @app.route("/enviar_reporte_email", methods=["POST"])
+@login_required
 def enviar_reporte_email():
     fecha = request.form.get("fecha") or date.today().isoformat()
     turno = request.form.get("turno") or "Dia"
@@ -1120,20 +1157,16 @@ def enviar_reporte_email():
                 raise RuntimeError("Hay actividades en proceso. Cierra los registros antes de enviar.")
             ruta, nombre_archivo = build_reporte_excel(conn, fecha, turno)
         subject = f"Informe actividades turno {turno} - {fecha}"
-        body = (
-            f"Estimados,\n\n"
-            f"Se adjunta informe de actividades del turno {turno} correspondiente al {fecha}.\n\n"
-            f"Saludos,\nReportabilidad Soldesp"
-        )
+        body = f"Estimados,\n\nSe adjunta informe de actividades del turno {turno} correspondiente al {fecha}.\n\nSaludos,\nReportabilidad Soldesp"
         run_background_task("report email", send_excel_email, "reporte", subject, body, ruta, nombre_archivo)
-        return redirect(url_for("cierre", fecha=fecha, turno=turno,
-                                msg="Envio de informe iniciado en segundo plano. Revisa el correo en unos minutos."))
+        return redirect(url_for("cierre", fecha=fecha, turno=turno, msg="Envio de informe iniciado en segundo plano. Revisa el correo en unos minutos."))
     except Exception as exc:
-        return redirect(url_for("cierre", fecha=fecha, turno=turno,
-                                error="No se pudo enviar informe: " + flash_text(exc)))
+        return redirect(url_for("cierre", fecha=fecha, turno=turno, error="No se pudo enviar informe: " + flash_text(exc)))
 
 
 @app.route("/limpiar_db", methods=["GET", "POST"])
+@login_required
+@admin_required
 def limpiar_db():
     if request.method == "POST":
         with db() as conn:
@@ -1160,11 +1193,10 @@ def handle_unexpected_error(exc):
     if isinstance(exc, HTTPException):
         return exc
     app.logger.exception("Unhandled application error")
-    return redirect(url_for("asistencia", error="Error interno controlado: " + flash_text(exc)))
+    return redirect(url_for("asistencia", error="Error interno: " + flash_text(exc)))
 
 
 init_db()
-
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)), debug=False)
